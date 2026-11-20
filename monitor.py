@@ -17,6 +17,109 @@ from config import Config
 logger = logging.getLogger("monitor")
 
 
+def get_ist_timezone() -> datetime.tzinfo:
+    """Return Asia/Kolkata timezone with reliable fallback."""
+    try:
+        import zoneinfo
+        return zoneinfo.ZoneInfo("Asia/Kolkata")
+    except Exception:
+        return datetime.timezone(datetime.timedelta(hours=5, minutes=30), name="Asia/Kolkata")
+
+
+def get_ist_now() -> datetime.datetime:
+    """Return current timezone-aware datetime in Asia/Kolkata (IST)."""
+    return datetime.datetime.now(get_ist_timezone())
+
+
+def validate_showtime(show_date: str, show_time: str) -> Tuple[datetime.datetime, str, str]:
+    """
+    Strict validation for booking dates and showtimes against Asia/Kolkata (IST) timezone.
+    Safeguards:
+    1. Rejects all past dates (show_date < today_ist).
+    2. Rejects past showtimes on today's date (show_datetime < now_ist).
+    3. Rejects dates excessively far in advance (> 60 days).
+    4. Validates date and time format strictly.
+
+    Returns:
+        (show_datetime_ist, formatted_date_str, formatted_time_str)
+    Raises:
+        ValueError if the date or time is invalid or in the past.
+    """
+    clean_date = (show_date or "").strip()
+    clean_time = (show_time or "").strip()
+
+    if not clean_date:
+        raise ValueError("Show date is required.")
+    if not clean_time:
+        raise ValueError("Showtime is required.")
+
+    # Parse date
+    parsed_date: Optional[datetime.date] = None
+    if re.match(r"^\d{4}-\d{2}-\d{2}$", clean_date):
+        try:
+            parsed_date = datetime.datetime.strptime(clean_date, "%Y-%m-%d").date()
+        except ValueError as e:
+            raise ValueError(f"Invalid date '{clean_date}': {e}")
+    elif re.match(r"^\d{8}$", clean_date):
+        try:
+            parsed_date = datetime.datetime.strptime(clean_date, "%Y%m%d").date()
+        except ValueError as e:
+            raise ValueError(f"Invalid date '{clean_date}': {e}")
+    else:
+        raise ValueError(f"Invalid date format '{clean_date}'. Expected YYYY-MM-DD (e.g. 2026-11-21).")
+
+    # Parse time
+    parsed_time_obj: Optional[datetime.time] = None
+    time_formats = [
+        "%I:%M %p",  # 06:45 PM or 6:45 PM
+        "%I:%M%p",   # 06:45PM
+        "%H:%M",     # 18:45
+        "%I %p",     # 7 PM
+    ]
+    for fmt in time_formats:
+        try:
+            dt_tmp = datetime.datetime.strptime(clean_time.upper(), fmt)
+            parsed_time_obj = dt_tmp.time()
+            break
+        except ValueError:
+            continue
+
+    if not parsed_time_obj:
+        raise ValueError(
+            f"Invalid showtime format '{clean_time}'. Expected formats like '06:45 PM' or '18:45'."
+        )
+
+    ist_tz = get_ist_timezone()
+    now_ist = datetime.datetime.now(ist_tz)
+    show_dt_ist = datetime.datetime.combine(parsed_date, parsed_time_obj, tzinfo=ist_tz)
+
+    formatted_date_str = parsed_date.strftime("%Y-%m-%d")
+    formatted_time_str = show_dt_ist.strftime("%I:%M %p")
+
+    # Rule 1: Check date is not in the past
+    if parsed_date < now_ist.date():
+        raise ValueError(
+            f"Booking date {formatted_date_str} is in the past! "
+            f"Today in India (Asia/Kolkata) is {now_ist.strftime('%Y-%m-%d')}."
+        )
+
+    # Rule 2: Check full show datetime is not in the past
+    if show_dt_ist < now_ist:
+        raise ValueError(
+            f"Showtime {formatted_date_str} {formatted_time_str} IST is in the past! "
+            f"Current time in India (Asia/Kolkata) is {now_ist.strftime('%Y-%m-%d %I:%M %p IST')}."
+        )
+
+    # Rule 3: Check date is within reasonable advance booking horizon (60 days)
+    max_advance = now_ist.date() + datetime.timedelta(days=60)
+    if parsed_date > max_advance:
+        raise ValueError(
+            f"Show date {formatted_date_str} exceeds maximum advance booking horizon (max {max_advance.strftime('%Y-%m-%d')})."
+        )
+
+    return show_dt_ist, formatted_date_str, formatted_time_str
+
+
 class BookingMonitor:
     def __init__(self, db, headless: Optional[bool] = None, proxy: Optional[str] = None):
         self.db = db
@@ -381,47 +484,114 @@ class BookingMonitor:
         self,
         show_date: str,
         show_time: str,
+        operator_name: str,
+        visually_confirmed: bool,
         booking_link: Optional[str] = None,
         screen_name: str = "4K RGB Laser Atmos (Audi 1)",
         booking_status: str = "AVAILABLE",
+        ip_address: Optional[str] = None,
     ) -> Tuple[int, bool, bool, Dict[str, Any], Optional[str]]:
         """
-        Manual Booking-Page Verification Fallback:
-        Allows the operator/user to verify live BookMyShow opening directly via RDP / Dashboard,
-        instantly recording a LIVE_VERIFIED showtime and triggering the real Telegram alert.
+        Operator Visual Booking-Page Verification:
+        Enforces strict safeguards:
+        1. visually_confirmed must be explicitly True.
+        2. operator_name must be non-empty.
+        3. show_date and show_time must be strictly in the future in Asia/Kolkata (IST).
+        4. Logs audit entry in verification_audit_log for every attempt.
+        5. Prevents duplicate notifications.
         Returns: (show_id, is_new, is_duplicate, show_record, prev_alert_time)
         """
+        # Guard 1: Require explicit visual certification
+        if not visually_confirmed:
+            self.db.log_verification_audit(
+                operator_name=operator_name or "Unknown",
+                show_date=show_date,
+                show_time=show_time,
+                action="REJECTED_VALIDATION",
+                notes="Rejected: Visual confirmation checkbox was not checked.",
+                ip_address=ip_address,
+            )
+            raise ValueError(
+                "Manual verification requires explicit visual certification that actual seats are bookable on BookMyShow."
+            )
+
+        # Guard 2: Require valid operator name
+        clean_operator = (operator_name or "").strip()
+        if not clean_operator or len(clean_operator) < 2:
+            self.db.log_verification_audit(
+                operator_name="Anonymous",
+                show_date=show_date,
+                show_time=show_time,
+                action="REJECTED_VALIDATION",
+                notes="Rejected: Missing or invalid operator name.",
+                ip_address=ip_address,
+            )
+            raise ValueError("Operator name is required for verification audit logging.")
+
+        # Guard 3: Validate booking status
+        clean_status = (booking_status or "AVAILABLE").upper()
+        if clean_status not in ("AVAILABLE", "FILLING_FAST"):
+            raise ValueError(f"Cannot verify booking with non-bookable status '{clean_status}'.")
+
+        # Guard 4: Strictly validate date/time in Asia/Kolkata timezone
+        try:
+            show_dt_ist, valid_date, valid_time = validate_showtime(show_date, show_time)
+        except ValueError as val_err:
+            self.db.log_verification_audit(
+                operator_name=clean_operator,
+                show_date=show_date,
+                show_time=show_time,
+                action="REJECTED_VALIDATION",
+                notes=f"Rejected date/time validation: {val_err}",
+                ip_address=ip_address,
+            )
+            raise
+
+        # Guard 5: Duplicate check
         is_dup, prev_time = self.db.is_already_alerted(
-            show_date=show_date,
-            show_time=show_time,
+            show_date=valid_date,
+            show_time=valid_time,
             screen_name=screen_name,
             cinema_code=self.cinema_code,
             movie_title=self.target_movie,
         )
 
         link = booking_link or self.base_venue_url
+        ist_now_str = get_ist_now().strftime("%Y-%m-%d %I:%M %p IST")
+
         show_record = {
             "cinema_name": self.cinema_name,
             "cinema_code": self.cinema_code,
             "movie_title": self.target_movie,
-            "show_date": show_date,
-            "show_time": show_time,
+            "show_date": valid_date,
+            "show_time": valid_time,
             "screen_name": screen_name,
-            "session_id": "MANUAL_VERIFY",
-            "booking_status": booking_status,
+            "session_id": "MANUAL_VERIFIED",
+            "booking_status": clean_status,
             "booking_link": link,
             "verification_mode": "LIVE_VERIFIED",
+            "confirmed_by": clean_operator,
+            "confirmed_at_ist": ist_now_str,
         }
 
-        now_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-        self.db.set_status("last_verification_time", now_str)
+        self.db.set_status("last_verification_time", ist_now_str)
 
         if is_dup:
-            logger.info(f"Show {show_date} {show_time} was already alerted at {prev_time}. Suppressing duplicate.")
+            logger.info(f"Show {valid_date} {valid_time} was already alerted at {prev_time}. Suppressing duplicate.")
+            self.db.log_verification_audit(
+                operator_name=clean_operator,
+                show_date=valid_date,
+                show_time=valid_time,
+                action="DUPLICATE_SUPPRESSED",
+                notes=f"Already alerted at {prev_time}. Alert suppressed.",
+                booking_link=link,
+                cinema_code=self.cinema_code,
+                ip_address=ip_address,
+            )
             self.db.log_event(
                 "INFO",
                 "MANUAL_VERIFY",
-                f"Manual verification entered for {show_date} {show_time}, but alert was already delivered at {prev_time}. Duplicate suppressed.",
+                f"Manual verification for {valid_date} {valid_time} suppressed duplicate alert (already sent at {prev_time}).",
             )
             return 0, False, True, show_record, prev_time
 
@@ -430,11 +600,21 @@ class BookingMonitor:
         self.db.set_status("source_state", "LIVE_VERIFIED")
         self.db.set_status(
             "last_check_result",
-            f"LIVE_VERIFIED: Show confirmed for {show_date} at {show_time}",
+            f"LIVE_VERIFIED: Confirmed by {clean_operator} for {valid_date} at {valid_time}",
+        )
+        self.db.log_verification_audit(
+            operator_name=clean_operator,
+            show_date=valid_date,
+            show_time=valid_time,
+            action="VERIFIED_LIVE",
+            notes=f"Live booking visually confirmed on BookMyShow ({link}). Alert queued.",
+            booking_link=link,
+            cinema_code=self.cinema_code,
+            ip_address=ip_address,
         )
         self.db.log_event(
             "SUCCESS",
             "MANUAL_VERIFY",
-            f"Operator manually verified live booking open: {show_date} {show_time} at {link}",
+            f"Operator {clean_operator} visually verified live booking: {valid_date} {valid_time} at {link}",
         )
         return show_id, is_new, False, show_record, None
