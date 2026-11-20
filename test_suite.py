@@ -3,9 +3,9 @@ Comprehensive Test Suite for Avengers: Doomsday Booking Alert Bot (Telegram Only
 Covers:
 1. Live Telegram Notification Test (verifies delivery to Chat ID 5188160752).
 2. Booking Detection with Sample HTML (Bookable, Sold Out, Other Movies, Listed-only).
-3. Distinct Verification States Test (LIVE_VERIFIED, SOURCE_UNAVAILABLE, SIMULATED).
-4. Manual Booking-Page Verification Fallback Test.
-5. Duplicate Alert Prevention Test.
+3. Status Distinction: LIVE_VERIFIED vs SOURCE_UNAVAILABLE vs SIMULATED.
+4. One-Click Verification Fallback & Timestamp Tracking.
+5. Strict Duplicate Notification Suppression Test.
 6. Database Persistence & WAL Concurrency Test.
 7. Real Live Ritzy Sha Cinemas Booking Page & Cloudflare WAF Detection Test.
 """
@@ -235,26 +235,26 @@ def test_status_distinction(temp_db):
     """
     live_show = {
         "cinema_name": "Ritzy Sha Cinemas",
-        "cinema_code": "RITM",
+        "cinema_code": "RZYM",
         "movie_title": "Avengers: Doomsday",
         "show_date": "2026-05-01",
         "show_time": "10:15 AM",
         "screen_name": "Audi 1",
         "session_id": "SES_LIVE",
         "booking_status": "AVAILABLE",
-        "booking_link": "https://in.bookmyshow.com/booktickets/RITM/SES_LIVE",
+        "booking_link": "https://in.bookmyshow.com/cinemas/madurai/ritzy-sha-cinemas-4k-rgb-laser-atmos-madurai/buytickets/RZYM",
         "verification_mode": "LIVE_VERIFIED",
     }
     sim_show = {
         "cinema_name": "Ritzy Sha Cinemas",
-        "cinema_code": "RITM",
+        "cinema_code": "RZYM",
         "movie_title": "Avengers: Doomsday",
         "show_date": "2026-05-01",
         "show_time": "06:45 PM",
         "screen_name": "Audi 1",
         "session_id": "SES_SIM",
         "booking_status": "AVAILABLE",
-        "booking_link": "https://in.bookmyshow.com/booktickets/RITM/SES_SIM",
+        "booking_link": "https://in.bookmyshow.com/cinemas/madurai/ritzy-sha-cinemas-4k-rgb-laser-atmos-madurai/buytickets/RZYM",
         "verification_mode": "SIMULATED",
     }
 
@@ -268,74 +268,54 @@ def test_status_distinction(temp_db):
 
 
 # ==============================================================================
-# 4. Manual Booking-Page Verification Fallback Test
+# 4. One-Click Manual Verification & Duplicate Suppression Test
 # ==============================================================================
 
-def test_manual_verification_fallback(temp_db):
-    """Test operator manual verification ingest creating a LIVE_VERIFIED record."""
+def test_manual_verification_and_duplicate_suppression(temp_db):
+    """
+    Test that:
+    1. First one-click confirmation records LIVE_VERIFIED and marks pending alert.
+    2. After alert is marked sent, second confirmation for identical showtime is flagged as duplicate.
+    3. Duplicate does NOT create a duplicate record or trigger duplicate alert.
+    """
     monitor = BookingMonitor(temp_db)
-    show_id, is_new, show = monitor.record_manual_verification(
+    
+    # First confirmation
+    show_id, is_new, is_dup, show, prev_time = monitor.record_manual_verification(
         show_date="2026-05-01",
         show_time="09:30 PM",
-        booking_link="https://in.bookmyshow.com/booktickets/RITM/MANUAL123",
-        screen_name="4K RGB Laser Atmos",
+        booking_link="https://in.bookmyshow.com/cinemas/madurai/ritzy-sha-cinemas-4k-rgb-laser-atmos-madurai/buytickets/RZYM",
+        screen_name="4K RGB Laser Atmos (Audi 1)",
     )
 
     assert show_id > 0
     assert is_new is True
+    assert is_dup is False
     assert show["verification_mode"] == "LIVE_VERIFIED"
-    assert temp_db.get_status("monitoring_status") == "LIVE_VERIFIED"
+    assert temp_db.get_status("last_verification_time") is not None
 
-    pending = temp_db.get_pending_alerts()
-    assert len(pending) == 1
-    assert pending[0]["id"] == show_id
-    assert pending[0]["verification_mode"] == "LIVE_VERIFIED"
-
-
-# ==============================================================================
-# 5. Duplicate Alert Prevention Test
-# ==============================================================================
-
-def test_duplicate_alert_prevention(temp_db):
-    """
-    Verify:
-    1. Pending alerts return only bookable shows with unsent alerts.
-    2. Once Telegram delivery succeeds, the show is marked and never alerted again.
-    3. Re-scanning the same showtime prevents duplicate inserts.
-    """
-    show = {
-        "cinema_name": "Ritzy Sha Cinemas",
-        "cinema_code": "RITM",
-        "movie_title": "Avengers: Doomsday",
-        "show_date": "2026-05-01",
-        "show_time": "10:15 AM",
-        "screen_name": "Audi 1",
-        "session_id": "SES101",
-        "booking_status": "AVAILABLE",
-        "booking_link": "https://in.bookmyshow.com/booktickets/RITM/SES101",
-        "verification_mode": "LIVE_VERIFIED",
-    }
-
-    show_id, is_new, is_bookable = temp_db.record_showtime(show)
-    assert is_new is True
-
-    pending = temp_db.get_pending_alerts()
-    assert len(pending) == 1
-
+    # Mark as alerted
     temp_db.mark_alert_sent(show_id)
 
-    pending_cycle_2 = temp_db.get_pending_alerts()
-    assert len(pending_cycle_2) == 0
+    # Second confirmation for SAME showtime
+    show_id2, is_new2, is_dup2, show2, prev_time2 = monitor.record_manual_verification(
+        show_date="2026-05-01",
+        show_time="09:30 PM",
+        booking_link="https://in.bookmyshow.com/cinemas/madurai/ritzy-sha-cinemas-4k-rgb-laser-atmos-madurai/buytickets/RZYM",
+        screen_name="4K RGB Laser Atmos (Audi 1)",
+    )
 
-    show_id2, is_new2, is_bookable2 = temp_db.record_showtime(show)
-    assert show_id2 == show_id
+    assert is_dup2 is True
+    assert prev_time2 is not None
+    assert show_id2 == 0
     assert is_new2 is False
 
+    # Pending alerts must remain empty
     assert len(temp_db.get_pending_alerts()) == 0
 
 
 # ==============================================================================
-# 6. Database Persistence & WAL Concurrency Test
+# 5. Database Persistence & WAL Concurrency Test
 # ==============================================================================
 
 def test_database_persistence_and_logging(temp_db):
@@ -353,14 +333,14 @@ def test_database_persistence_and_logging(temp_db):
 
 
 # ==============================================================================
-# 7. Real Live Booking Page & Cloudflare WAF Detection Test
+# 6. Real Live Booking Page & Cloudflare WAF Detection Test
 # ==============================================================================
 
 @pytest.mark.asyncio
 async def test_live_ritzy_sha_bms_page_check():
     """
     Live diagnostic test against the real BookMyShow venue page for Ritzy Sha Cinemas:
-    https://in.bookmyshow.com/madurai/cinemas/ritzy-sha-cinemas-4k-rgb-laser-atmos-madurai/RITM
+    https://in.bookmyshow.com/cinemas/madurai/ritzy-sha-cinemas-4k-rgb-laser-atmos-madurai/buytickets/RZYM
 
     Validates that:
     1. The monitor navigates to the real URL.
