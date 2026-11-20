@@ -268,22 +268,92 @@ def test_status_distinction(temp_db):
 
 
 # ==============================================================================
-# 4. One-Click Manual Verification & Duplicate Suppression Test
+# 4. Strict Validation Safeguards, Visual Confirmation & Audit Log Tests
 # ==============================================================================
 
-def test_manual_verification_and_duplicate_suppression(temp_db):
+def test_rejection_of_past_dates(temp_db):
     """
-    Test that:
-    1. First one-click confirmation records LIVE_VERIFIED and marks pending alert.
-    2. After alert is marked sent, second confirmation for identical showtime is flagged as duplicate.
-    3. Duplicate does NOT create a duplicate record or trigger duplicate alert.
+    Safeguard Test 1: Reject all past booking dates.
+    Dates prior to today in Asia/Kolkata timezone MUST be rejected with ValueError.
     """
-    monitor = BookingMonitor(temp_db)
+    from monitor import BookingMonitor, validate_showtime, get_ist_now
     
-    # First confirmation
+    # 2026-05-01 and 2026-05-02 are in the past relative to November 2026
+    with pytest.raises(ValueError, match="is in the past"):
+        validate_showtime("2026-05-01", "06:45 PM")
+
+    with pytest.raises(ValueError, match="is in the past"):
+        validate_showtime("2026-05-02", "06:45 PM")
+
+    # Yesterday in IST
+    import datetime
+    yesterday = (get_ist_now().date() - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+    with pytest.raises(ValueError, match="is in the past"):
+        validate_showtime(yesterday, "06:45 PM")
+
+
+def test_rejection_without_visual_confirmation(temp_db):
+    """
+    Safeguard Test 2: Reject manual verification if visually_confirmed is False.
+    """
+    import datetime
+    from monitor import BookingMonitor, get_ist_now
+    
+    monitor = BookingMonitor(temp_db)
+    valid_future_date = (get_ist_now().date() + datetime.timedelta(days=2)).strftime("%Y-%m-%d")
+
+    with pytest.raises(ValueError, match="explicit visual certification"):
+        monitor.record_manual_verification(
+            show_date=valid_future_date,
+            show_time="06:45 PM",
+            operator_name="Shri Dharsan",
+            visually_confirmed=False,
+        )
+
+    # Verify audit log recorded the rejection
+    logs = temp_db.get_verification_audit_logs(limit=5)
+    assert len(logs) == 1
+    assert logs[0]["action"] == "REJECTED_VALIDATION"
+
+
+def test_rejection_with_empty_operator(temp_db):
+    """
+    Safeguard Test 3: Reject manual verification if operator name is missing.
+    """
+    import datetime
+    from monitor import BookingMonitor, get_ist_now
+    
+    monitor = BookingMonitor(temp_db)
+    valid_future_date = (get_ist_now().date() + datetime.timedelta(days=2)).strftime("%Y-%m-%d")
+
+    with pytest.raises(ValueError, match="Operator name is required"):
+        monitor.record_manual_verification(
+            show_date=valid_future_date,
+            show_time="06:45 PM",
+            operator_name=" ",
+            visually_confirmed=True,
+        )
+
+
+def test_valid_future_verification_and_duplicate_suppression(temp_db):
+    """
+    Safeguard Test 4:
+    1. Valid future date with visual certification and operator succeeds.
+    2. Records audit log with VERIFIED_LIVE.
+    3. Duplicate detection suppresses second identical entry and logs DUPLICATE_SUPPRESSED.
+    """
+    import datetime
+    from monitor import BookingMonitor, get_ist_now
+
+    monitor = BookingMonitor(temp_db)
+    future_date = (get_ist_now().date() + datetime.timedelta(days=3)).strftime("%Y-%m-%d")
+
+    # 1. First valid visual confirmation
     show_id, is_new, is_dup, show, prev_time = monitor.record_manual_verification(
-        show_date="2026-05-01",
+        show_date=future_date,
         show_time="09:30 PM",
+        operator_name="Shri Dharsan",
+        visually_confirmed=True,
         booking_link="https://in.bookmyshow.com/cinemas/madurai/ritzy-sha-cinemas-4k-rgb-laser-atmos-madurai/buytickets/RZYM",
         screen_name="4K RGB Laser Atmos (Audi 1)",
     )
@@ -292,15 +362,25 @@ def test_manual_verification_and_duplicate_suppression(temp_db):
     assert is_new is True
     assert is_dup is False
     assert show["verification_mode"] == "LIVE_VERIFIED"
+    assert show["confirmed_by"] == "Shri Dharsan"
+    assert "IST" in show["confirmed_at_ist"]
     assert temp_db.get_status("last_verification_time") is not None
 
-    # Mark as alerted
+    # Audit log check
+    audit_logs = temp_db.get_verification_audit_logs(limit=10)
+    assert len(audit_logs) >= 1
+    assert audit_logs[0]["action"] == "VERIFIED_LIVE"
+    assert audit_logs[0]["operator_name"] == "Shri Dharsan"
+
+    # Mark alert as dispatched
     temp_db.mark_alert_sent(show_id)
 
-    # Second confirmation for SAME showtime
+    # 2. Second confirmation for SAME showtime
     show_id2, is_new2, is_dup2, show2, prev_time2 = monitor.record_manual_verification(
-        show_date="2026-05-01",
+        show_date=future_date,
         show_time="09:30 PM",
+        operator_name="Shri Dharsan",
+        visually_confirmed=True,
         booking_link="https://in.bookmyshow.com/cinemas/madurai/ritzy-sha-cinemas-4k-rgb-laser-atmos-madurai/buytickets/RZYM",
         screen_name="4K RGB Laser Atmos (Audi 1)",
     )
@@ -312,6 +392,27 @@ def test_manual_verification_and_duplicate_suppression(temp_db):
 
     # Pending alerts must remain empty
     assert len(temp_db.get_pending_alerts()) == 0
+
+    # Verify duplicate suppressed in audit log
+    audit_logs2 = temp_db.get_verification_audit_logs(limit=10)
+    assert audit_logs2[0]["action"] == "DUPLICATE_SUPPRESSED"
+
+
+def test_telegram_defense_in_depth_past_date_rejection():
+    """
+    Safeguard Test 5: TelegramBot must reject sending LIVE_VERIFIED alert if date is in the past.
+    """
+    bot = TelegramBot()
+    past_show = {
+        "cinema_name": "Ritzy Sha Cinemas",
+        "movie_title": "Avengers: Doomsday",
+        "show_date": "2026-05-02",  # Past date
+        "show_time": "06:45 PM",
+        "booking_status": "AVAILABLE",
+        "verification_mode": "LIVE_VERIFIED",
+    }
+    sent = bot.send_alert(past_show)
+    assert sent is False, "TelegramBot should reject sending LIVE_VERIFIED alert for past dates."
 
 
 # ==============================================================================
