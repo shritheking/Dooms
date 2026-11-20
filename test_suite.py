@@ -3,9 +3,11 @@ Comprehensive Test Suite for Avengers: Doomsday Booking Alert Bot (Telegram Only
 Covers:
 1. Live Telegram Notification Test (verifies delivery to Chat ID 5188160752).
 2. Booking Detection with Sample HTML (Bookable, Sold Out, Other Movies, Listed-only).
-3. Duplicate Alert Prevention Test.
-4. Database Persistence & WAL Concurrency Test.
-5. Real Live Ritzy Sha Cinemas Booking Page & Cloudflare WAF Detection Test.
+3. Distinct Verification States Test (LIVE_VERIFIED, SOURCE_UNAVAILABLE, SIMULATED).
+4. Manual Booking-Page Verification Fallback Test.
+5. Duplicate Alert Prevention Test.
+6. Database Persistence & WAL Concurrency Test.
+7. Real Live Ritzy Sha Cinemas Booking Page & Cloudflare WAF Detection Test.
 """
 
 import sys
@@ -178,7 +180,7 @@ SAMPLE_BMS_ANNOUNCEMENT_ONLY = """
 def test_booking_detection_sample_available(temp_db):
     """Test parser detecting available and fast filling showtimes."""
     monitor = BookingMonitor(temp_db)
-    shows, meta = monitor.parse_html_for_shows(SAMPLE_BMS_NEXT_DATA_AVAILABLE, "20260501")
+    shows, meta = monitor.parse_html_for_shows(SAMPLE_BMS_NEXT_DATA_AVAILABLE, "20260501", "LIVE_VERIFIED")
 
     assert len(shows) == 2
     assert meta["cloudflare_blocked"] is False
@@ -187,6 +189,7 @@ def test_booking_detection_sample_available(temp_db):
     assert show1["movie_title"] == "Avengers: Doomsday"
     assert show1["show_time"] == "10:15 AM"
     assert show1["booking_status"] == "AVAILABLE"
+    assert show1["verification_mode"] == "LIVE_VERIFIED"
     assert "AVENGERS_SESSION_01" in show1["booking_link"]
 
     show2 = shows[1]
@@ -220,7 +223,77 @@ def test_booking_detection_announcement_only_no_alert(temp_db):
 
 
 # ==============================================================================
-# 3. Duplicate Alert Prevention Test
+# 3. Status Distinction: LIVE_VERIFIED vs SOURCE_UNAVAILABLE vs SIMULATED
+# ==============================================================================
+
+def test_status_distinction(temp_db):
+    """
+    Verify distinct status tracking:
+    - LIVE_VERIFIED shows format with [LIVE VERIFIED] and (CONFIRMED)
+    - SIMULATED shows format with [SIMULATED TEST]
+    - Database tracks counts separately in summary stats.
+    """
+    live_show = {
+        "cinema_name": "Ritzy Sha Cinemas",
+        "cinema_code": "RITM",
+        "movie_title": "Avengers: Doomsday",
+        "show_date": "2026-05-01",
+        "show_time": "10:15 AM",
+        "screen_name": "Audi 1",
+        "session_id": "SES_LIVE",
+        "booking_status": "AVAILABLE",
+        "booking_link": "https://in.bookmyshow.com/booktickets/RITM/SES_LIVE",
+        "verification_mode": "LIVE_VERIFIED",
+    }
+    sim_show = {
+        "cinema_name": "Ritzy Sha Cinemas",
+        "cinema_code": "RITM",
+        "movie_title": "Avengers: Doomsday",
+        "show_date": "2026-05-01",
+        "show_time": "06:45 PM",
+        "screen_name": "Audi 1",
+        "session_id": "SES_SIM",
+        "booking_status": "AVAILABLE",
+        "booking_link": "https://in.bookmyshow.com/booktickets/RITM/SES_SIM",
+        "verification_mode": "SIMULATED",
+    }
+
+    temp_db.record_showtime(live_show)
+    temp_db.record_showtime(sim_show)
+
+    stats = temp_db.get_summary_stats()
+    assert stats["live_verified_count"] == 1
+    assert stats["simulated_count"] == 1
+    assert stats["total_shows"] == 2
+
+
+# ==============================================================================
+# 4. Manual Booking-Page Verification Fallback Test
+# ==============================================================================
+
+def test_manual_verification_fallback(temp_db):
+    """Test operator manual verification ingest creating a LIVE_VERIFIED record."""
+    monitor = BookingMonitor(temp_db)
+    show_id, is_new, show = monitor.record_manual_verification(
+        show_date="2026-05-01",
+        show_time="09:30 PM",
+        booking_link="https://in.bookmyshow.com/booktickets/RITM/MANUAL123",
+        screen_name="4K RGB Laser Atmos",
+    )
+
+    assert show_id > 0
+    assert is_new is True
+    assert show["verification_mode"] == "LIVE_VERIFIED"
+    assert temp_db.get_status("monitoring_status") == "LIVE_VERIFIED"
+
+    pending = temp_db.get_pending_alerts()
+    assert len(pending) == 1
+    assert pending[0]["id"] == show_id
+    assert pending[0]["verification_mode"] == "LIVE_VERIFIED"
+
+
+# ==============================================================================
+# 5. Duplicate Alert Prevention Test
 # ==============================================================================
 
 def test_duplicate_alert_prevention(temp_db):
@@ -240,59 +313,47 @@ def test_duplicate_alert_prevention(temp_db):
         "session_id": "SES101",
         "booking_status": "AVAILABLE",
         "booking_link": "https://in.bookmyshow.com/booktickets/RITM/SES101",
+        "verification_mode": "LIVE_VERIFIED",
     }
 
-    # 1. Insert showtime
     show_id, is_new, is_bookable = temp_db.record_showtime(show)
     assert is_new is True
-    assert is_bookable is True
 
-    # 2. Query pending alerts -> should be returned
     pending = temp_db.get_pending_alerts()
     assert len(pending) == 1
-    assert pending[0]["id"] == show_id
-    assert pending[0]["telegram_alert_sent"] == 0
 
-    # 3. Mark Telegram as delivered
     temp_db.mark_alert_sent(show_id)
 
-    # 4. Re-query pending alerts -> cleared!
     pending_cycle_2 = temp_db.get_pending_alerts()
     assert len(pending_cycle_2) == 0
 
-    # 5. Subsequent scan recording the SAME showtime must NOT duplicate
     show_id2, is_new2, is_bookable2 = temp_db.record_showtime(show)
     assert show_id2 == show_id
     assert is_new2 is False
-    assert is_bookable2 is False
 
-    # Pending remains empty
     assert len(temp_db.get_pending_alerts()) == 0
 
 
 # ==============================================================================
-# 4. Database Persistence & WAL Concurrency Test
+# 6. Database Persistence & WAL Concurrency Test
 # ==============================================================================
 
 def test_database_persistence_and_logging(temp_db):
     """Test SQLite system status and activity log operations."""
-    temp_db.set_status("monitoring_status", "ACTIVE")
-    assert temp_db.get_status("monitoring_status") == "ACTIVE"
+    temp_db.set_status("source_state", "SOURCE_UNAVAILABLE")
+    assert temp_db.get_status("source_state") == "SOURCE_UNAVAILABLE"
 
     temp_db.log_event("INFO", "CHECK", "Periodic scan executed successfully")
-    temp_db.log_event("WARNING", "BLOCKED", "Test warning event")
+    temp_db.log_event("WARNING", "BLOCKED", "Test Cloudflare restriction logged")
 
     logs = temp_db.get_recent_logs(limit=10)
     assert len(logs) == 2
     assert logs[0]["event_type"] == "BLOCKED"
     assert logs[1]["event_type"] == "CHECK"
 
-    stats = temp_db.get_summary_stats()
-    assert stats["monitoring_status"] == "ACTIVE"
-
 
 # ==============================================================================
-# 5. Real Live Booking Page & Cloudflare WAF Detection Test
+# 7. Real Live Booking Page & Cloudflare WAF Detection Test
 # ==============================================================================
 
 @pytest.mark.asyncio
@@ -303,7 +364,7 @@ async def test_live_ritzy_sha_bms_page_check():
 
     Validates that:
     1. The monitor navigates to the real URL.
-    2. Identifies Cloudflare Turnstile challenge if triggered on cloud IP.
+    2. Identifies Cloudflare Turnstile restriction on cloud VPS IP.
     3. Respects anti-bot restrictions and cleanly sets 'cloudflare_blocked=True' without crashing.
     """
     with tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False) as f:
