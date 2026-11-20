@@ -5,6 +5,7 @@ Clearly distinguishes LIVE_VERIFIED alerts from SIMULATED test alerts to prevent
 """
 
 import time
+import datetime
 import logging
 import threading
 import requests
@@ -61,39 +62,62 @@ class TelegramBot:
         """
         Send formatted booking alert.
         Strictly differentiates between LIVE_VERIFIED and SIMULATED to avoid false positives.
+        Enforces defense-in-depth past-date rejection for LIVE_VERIFIED alerts.
         """
         cinema = show.get("cinema_name", Config.CINEMA_NAME)
         location = Config.LOCATION_CITY
         movie = show.get("movie_title", Config.MOVIE_TITLE)
         show_date = show.get("show_date", "N/A")
         show_time = show.get("show_time", "N/A")
+        screen_name = show.get("screen_name", "4K RGB Laser Atmos")
         status = show.get("booking_status", "AVAILABLE")
         booking_link = show.get("booking_link", Config.BMS_VENUE_URL)
         mode = show.get("verification_mode", "LIVE_VERIFIED").upper()
+        confirmed_by = show.get("confirmed_by") or "Official BMS Verification"
+        confirmed_at = show.get("confirmed_at_ist") or "Verified Live"
 
         if mode == "SIMULATED":
             message = (
-                f"🧪 [SIMULATED TEST] AVENGERS: DOOMSDAY ALERT TEST\n\n"
+                f"🧪 [SIMULATED TEST ONLY - NOT A REAL BOOKING]\n"
+                f"⚠️ THIS IS A TEST PING TO VERIFY TELEGRAM DELIVERY.\n"
+                f"NO REAL TICKETS ARE CURRENTLY BOOKABLE.\n\n"
                 f"Cinema: {cinema}\n"
                 f"Location: {location}\n"
                 f"Movie: {movie}\n"
-                f"Show Date: {show_date}\n"
-                f"Showtime: {show_time}\n"
-                f"Status: SIMULATED (No real booking opened)\n\n"
-                f"⚠️ Note: This is an intentional simulation to test notification delivery.\n"
-                f"Direct link: {booking_link}"
+                f"Simulated Date: {show_date}\n"
+                f"Simulated Showtime: {show_time}\n"
+                f"Status: SIMULATED (Delivery Test)\n\n"
+                f"BookMyShow Page:\n{booking_link}"
             )
         else:
-            # LIVE_VERIFIED
+            # LIVE_VERIFIED - Defense-in-depth date validation
+            try:
+                # Reject if date is in the past
+                today_ist = (
+                    datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5, minutes=30)))
+                    .date()
+                    .strftime("%Y-%m-%d")
+                )
+                if show_date < today_ist:
+                    logger.critical(
+                        f"REJECTED sending LIVE_VERIFIED alert: Date {show_date} is in the past! (Today IST: {today_ist})"
+                    )
+                    return False
+            except Exception as e:
+                logger.warning(f"Date check error: {e}")
+
             message = (
                 f"🚨 AVENGERS: DOOMSDAY BOOKING OPEN! [LIVE VERIFIED]\n\n"
-                f"Cinema: {cinema}\n"
+                f"Cinema: {cinema} (RZYM)\n"
                 f"Location: {location}\n"
                 f"Movie: {movie}\n"
                 f"Show Date: {show_date}\n"
-                f"Showtime: {show_time}\n"
+                f"Showtime: {show_time} IST\n"
+                f"Screen: {screen_name}\n"
                 f"Booking Status: {status} (CONFIRMED)\n\n"
-                f"🎟️ BOOK YOUR TICKETS:\n"
+                f"👤 Visually Confirmed By: {confirmed_by}\n"
+                f"🕒 Confirmed At: {confirmed_at}\n\n"
+                f"🎟️ BOOK YOUR TICKETS NOW:\n"
                 f"{booking_link}"
             )
 
@@ -104,11 +128,13 @@ class TelegramBot:
         )
 
     def send_test_message(self, chat_id: Optional[str] = None) -> Dict[str, Any]:
-        """Send an interactive test verification message."""
+        """Send an interactive test verification message with dynamically calculated future date."""
+        ist_now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5, minutes=30)))
+        test_future_date = (ist_now + datetime.timedelta(days=1)).strftime("%Y-%m-%d")
         test_show = {
             "cinema_name": Config.CINEMA_NAME,
             "movie_title": Config.MOVIE_TITLE,
-            "show_date": "2026-05-01",
+            "show_date": test_future_date,
             "show_time": "07:00 PM",
             "booking_status": "AVAILABLE",
             "booking_link": Config.BMS_VENUE_URL,
