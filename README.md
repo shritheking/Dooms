@@ -9,11 +9,32 @@ Automated movie ticket booking alert system engineered in Python to notify you e
 * **Cinema:** Ritzy Sha Cinemas (4K RGB Laser & Dolby Atmos)
 * **Location:** Anna Salai, Gandhi Nagar / Shenoy Nagar, Madurai, Tamil Nadu, India
 * **Platform:** BookMyShow
-* **Cinema Code:** `RITM`
-* **Direct BMS Link:** [https://in.bookmyshow.com/madurai/cinemas/ritzy-sha-cinemas-4k-rgb-laser-atmos-madurai/RITM](https://in.bookmyshow.com/madurai/cinemas/ritzy-sha-cinemas-4k-rgb-laser-atmos-madurai/RITM)
+* **Cinema Code:** `RZYM`
+* **Direct BMS Link:** [https://in.bookmyshow.com/cinemas/madurai/ritzy-sha-cinemas-4k-rgb-laser-atmos-madurai/buytickets/RZYM](https://in.bookmyshow.com/cinemas/madurai/ritzy-sha-cinemas-4k-rgb-laser-atmos-madurai/buytickets/RZYM)
 * **Notification Channel:** **Telegram Only** (WhatsApp completely removed)
 * **Monitoring Interval:** Every 5 minutes (300 seconds)
 * **Monitoring Horizon:** 14 upcoming days
+* **Timezone Standard:** `Asia/Kolkata` (IST, UTC+5:30)
+
+---
+
+## 🛑 Strict Safeguards & Date Validation (Asia/Kolkata)
+
+To eliminate false-positive alerts, past dates, or accidental test alerts:
+
+1. **Past Date & Time Rejection:**
+   * Validated strictly against `Asia/Kolkata` timezone.
+   * Any booking date before today in IST (e.g., `2026-05-01`, `2026-05-02`) is automatically rejected with HTTP 400.
+   * If today's date is entered, any showtime prior to the current IST clock time is rejected.
+2. **Visual Certification Required:**
+   * A `LIVE_VERIFIED` alert is only dispatched when the operator explicitly certifies visual confirmation on the official BookMyShow page.
+   * Requires non-empty Operator Name for audit tracking.
+3. **Simulation Isolation:**
+   * Simulated test notifications are strictly isolated with `🧪 [SIMULATED TEST ONLY - NOT A REAL BOOKING]` and can never be labeled as `LIVE_VERIFIED`.
+4. **Permanent Audit Trail:**
+   * All verifications and rejected attempts are permanently recorded in `verification_audit_log` with IST timestamp, operator name, show details, and action status.
+5. **Deduplication:**
+   * Prevents repeat alerts for already-notified showtimes.
 
 ---
 
@@ -21,15 +42,13 @@ Automated movie ticket booking alert system engineered in Python to notify you e
 
 ### Live Network Diagnostic
 When accessing BookMyShow from a cloud VPS IP address (including Oracle Cloud, AWS, GCP):
-1. **Cloudflare Turnstile WAF:** BookMyShow returns `HTTP 403 Forbidden` with a Cloudflare bot challenge (`cf-mitigated: challenge`).
+1. **Cloudflare Turnstile WAF:** BookMyShow returns a Cloudflare bot challenge.
 2. **Anti-Bot Compliance:** The bot strictly follows safety and compliance standards:
    * It **never** attempts to solve, click through, or bypass Cloudflare CAPTCHAs.
-   * It logs the status as `BLOCKED_BY_CLOUDFLARE` on the dashboard.
-   * It avoids hammering the server.
-3. **To enable live scraping from your Windows VPS:**
-   * **Residential Proxy:** In `.env`, set `BMS_PROXY=http://user:password@residential-proxy-ip:port`. Residential IPs pass Cloudflare verification cleanly.
-   * **Run on Home Connection:** Running this bot on your personal home computer connects directly without Turnstile triggers.
-   * **Simulate Booking Opening:** You can verify the full alert pipeline anytime by clicking **"Simulate Opening"** on the dashboard or sending `/test` to the Telegram bot.
+   * It accurately logs the status as `SOURCE_UNAVAILABLE` on the dashboard.
+3. **Convenient Visual Verification Fallback:**
+   * Click **"CHECK DOOMSDAY BOOKINGS"** on the dashboard to open Ritzy Sha's live BookMyShow page.
+   * If showtimes are open, certify and confirm via the form to immediately dispatch the Telegram alert.
 
 ---
 
@@ -40,25 +59,37 @@ When accessing BookMyShow from a cloud VPS IP address (including Oracle Cloud, A
 * **Chat ID:** `5188160752`
 * **Verified Status:** Tested and confirmed live delivery.
 
-### Alert Message Format:
+### Live Verified Alert Format:
 ```text
-🚨 AVENGERS: DOOMSDAY BOOKING OPEN!
+🚨 AVENGERS: DOOMSDAY BOOKING OPEN! [LIVE VERIFIED]
 
-Cinema: Ritzy Sha Cinemas
+Cinema: Ritzy Sha Cinemas (RZYM)
 Location: Madurai
 Movie: Avengers: Doomsday
-Show Date: 2026-05-01
-Showtime: 06:45 PM
-Booking Status: AVAILABLE
+Show Date: [Valid Future Date]
+Showtime: [Time] IST
+Screen: 4K RGB Laser Atmos (Audi 1)
+Booking Status: AVAILABLE (CONFIRMED)
 
-🎟️ BOOK YOUR TICKETS:
-https://in.bookmyshow.com/booktickets/RITM/SESSION_ID
+👤 Visually Confirmed By: [Operator Name]
+🕒 Confirmed At: [Timestamp] IST
+
+🎟️ BOOK YOUR TICKETS NOW:
+https://in.bookmyshow.com/cinemas/madurai/ritzy-sha-cinemas-4k-rgb-laser-atmos-madurai/buytickets/RZYM
+```
+
+### Simulated Test Alert Format:
+```text
+🧪 [SIMULATED TEST ONLY - NOT A REAL BOOKING]
+⚠️ THIS IS A TEST PING TO VERIFY TELEGRAM DELIVERY.
+NO REAL TICKETS ARE CURRENTLY BOOKABLE.
+...
 ```
 
 ### Interactive Telegram Commands:
 * `/start` — View bot information, cinema target, and command reference.
 * `/status` — View current monitoring telemetry, total shows, and alert counters.
-* `/test` — Dispatches an immediate test booking alert.
+* `/test` — Dispatches an immediate test simulation alert.
 * `/check` — Triggers an immediate BookMyShow scan.
 
 ---
@@ -78,25 +109,21 @@ Navigate to the project folder:
 cd C:\Users\opc\.gemini\antigravity\scratch\avengers_booking_bot
 ```
 
-### Step 3: Verify Environment Configuration (.env)
-The `.env` file already contains your Telegram Bot Token and Chat ID:
-```env
-TELEGRAM_BOT_TOKEN=9101491571:AAE8c4qyg7G99aEXFWTjHHjdIYnrQI4jyGI
-TELEGRAM_CHAT_ID=5188160752
-```
-
-### Step 4: Run the Test Suite
-Verify that all 8 unit, integration, and diagnostic tests pass:
+### Step 3: Run the Test Suite
+Verify that all 13 unit, integration, and safeguard tests pass:
 ```powershell
-.\.venv\Scripts\pytest.exe test_suite.py -v
+.\.venv\Scripts\python.exe -m pytest -v test_suite.py
 ```
 
-### Step 5: Start the Bot Service
-Launch the continuous background runner and watchdog:
+### Step 4: 24/7 Background Service & Startup Execution
+The application automatically starts upon Windows login via the startup VBS launcher at:
+`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\AvengersBookingBot.vbs`
+
+To manually restart or run the background service with watchdog recovery:
 ```powershell
 .\run_service.ps1
 ```
-This runs the bot continuously, checks BookMyShow every 5 minutes, polls for Telegram commands, and restarts automatically if terminated.
+The glassmorphism dashboard is accessible at: `http://localhost:8080`.
 
 ### Step 6: Access the Dashboard
 Open your browser (or VPS browser) to:
