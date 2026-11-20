@@ -1,18 +1,18 @@
 """
 Main entry point for Avengers: Doomsday Booking Alert Bot (Telegram Only).
 Orchestrates:
-1. Native asyncio monitoring loop (checks every 5 minutes across dates).
-2. Explicit categorization of LIVE_VERIFIED, SOURCE_UNAVAILABLE, and SIMULATED states.
-3. Telegram bot command polling (/start, /status, /test, /check).
-4. Manual Booking-Page Verification Fallback panel on Dashboard and API.
-5. Modern FastAPI Dashboard with matte black, electric blue, and violet glassmorphism UI.
+1. Native asyncio monitoring loop (5-minute intervals across dates).
+2. Prominent "CHECK DOOMSDAY BOOKINGS" workflow with direct BookMyShow venue link.
+3. Convenient Manual Verification Form with One-Click Confirmation.
+4. Immediate Telegram alert dispatch with robust duplicate prevention.
+5. Displays Last Verification Time and Next Scheduled Check.
+6. Modern FastAPI Dashboard with matte black, electric blue, and violet glassmorphism UI.
 """
 
 import sys
 import asyncio
 import datetime
 import logging
-import threading
 from typing import Optional, Dict, Any
 from pathlib import Path
 from pydantic import BaseModel
@@ -99,7 +99,7 @@ async def run_scan_and_alert():
 
 
 def trigger_manual_scan_thread():
-    """Thread-safe trigger for manual scan from Telegram or API."""
+    """Thread-safe trigger for manual scan from Telegram command."""
     asyncio.run(run_scan_and_alert())
 
 
@@ -126,9 +126,7 @@ async def async_monitor_scheduler_loop():
 async def on_app_startup():
     """Bootstrap background monitoring loop and Telegram polling on application start."""
     logger.info("Initializing Avengers: Doomsday Telegram Alert Bot...")
-    # Start Telegram command polling thread
     telegram_client.start_polling(db, on_manual_check=trigger_manual_scan_thread)
-    # Start native async monitoring scheduler
     asyncio.create_task(async_monitor_scheduler_loop())
 
 
@@ -164,16 +162,17 @@ DASHBOARD_HTML = """
             --bg-surface: #0E131F;
             --bg-card: rgba(18, 24, 38, 0.75);
             --electric-blue: #00D2FF;
-            --electric-blue-glow: rgba(0, 210, 255, 0.25);
+            --electric-blue-glow: rgba(0, 210, 255, 0.35);
             --electric-accent: #0070F3;
             --violet: #8A2BE2;
-            --violet-glow: rgba(138, 43, 226, 0.25);
+            --violet-glow: rgba(138, 43, 226, 0.30);
             --text-primary: #F0F6FC;
             --text-secondary: #8B949E;
             --text-muted: #586069;
-            --border-glass: rgba(0, 210, 255, 0.14);
-            --border-glass-violet: rgba(138, 43, 226, 0.20);
+            --border-glass: rgba(0, 210, 255, 0.16);
+            --border-glass-violet: rgba(138, 43, 226, 0.22);
             --success: #00F298;
+            --success-glow: rgba(0, 242, 152, 0.3);
             --warning: #FFB800;
             --danger: #FF3B30;
         }
@@ -187,8 +186,8 @@ DASHBOARD_HTML = """
         body {
             background-color: var(--bg-base);
             background-image: 
-                radial-gradient(circle at 15% 20%, rgba(0, 210, 255, 0.08) 0%, transparent 45%),
-                radial-gradient(circle at 85% 80%, rgba(138, 43, 226, 0.08) 0%, transparent 45%),
+                radial-gradient(circle at 15% 15%, rgba(0, 210, 255, 0.09) 0%, transparent 50%),
+                radial-gradient(circle at 85% 85%, rgba(138, 43, 226, 0.09) 0%, transparent 50%),
                 linear-gradient(180deg, #07090E 0%, #0B0F19 100%);
             color: var(--text-primary);
             font-family: 'Plus Jakarta Sans', sans-serif;
@@ -220,22 +219,22 @@ DASHBOARD_HTML = """
         }
 
         .brand-icon {
-            width: 50px;
-            height: 50px;
-            border-radius: 12px;
+            width: 52px;
+            height: 52px;
+            border-radius: 14px;
             background: linear-gradient(135deg, #00D2FF 0%, #8A2BE2 100%);
             display: flex;
             align-items: center;
             justify-content: center;
             font-size: 26px;
-            box-shadow: 0 0 20px var(--electric-blue-glow);
+            box-shadow: 0 0 24px var(--electric-blue-glow);
         }
 
         .brand-title h1 {
             font-size: 22px;
             font-weight: 800;
             letter-spacing: -0.5px;
-            background: linear-gradient(90deg, #FFFFFF 30%, #00D2FF 70%, #9D4EDD 100%);
+            background: linear-gradient(90deg, #FFFFFF 20%, #00D2FF 65%, #9D4EDD 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
         }
@@ -265,6 +264,7 @@ DASHBOARD_HTML = """
             display: inline-flex;
             align-items: center;
             gap: 8px;
+            text-decoration: none;
             backdrop-filter: blur(8px);
         }
 
@@ -274,10 +274,22 @@ DASHBOARD_HTML = """
             box-shadow: 0 0 16px var(--electric-blue-glow);
         }
 
-        .btn-primary {
-            background: linear-gradient(135deg, rgba(0, 210, 255, 0.25) 0%, rgba(138, 43, 226, 0.25) 100%);
-            border: 1px solid var(--electric-blue);
-            color: #00D2FF;
+        .btn-hero-check {
+            background: linear-gradient(135deg, #00D2FF 0%, #0070F3 50%, #8A2BE2 100%);
+            color: #FFFFFF;
+            border: none;
+            padding: 12px 24px;
+            font-size: 14px;
+            font-weight: 800;
+            letter-spacing: 0.5px;
+            border-radius: 12px;
+            box-shadow: 0 0 25px var(--electric-blue-glow);
+            text-transform: uppercase;
+        }
+
+        .btn-hero-check:hover {
+            transform: translateY(-2px) scale(1.02);
+            box-shadow: 0 0 32px var(--electric-blue-glow);
         }
 
         .btn-telegram {
@@ -286,10 +298,27 @@ DASHBOARD_HTML = """
             color: #38B8FF;
         }
 
-        .btn-success {
-            background: linear-gradient(135deg, rgba(0, 242, 152, 0.25) 0%, rgba(0, 210, 255, 0.25) 100%);
-            border: 1px solid var(--success);
-            color: var(--success);
+        .btn-confirm-live {
+            background: linear-gradient(135deg, #00F298 0%, #00C875 100%);
+            color: #05140D;
+            border: none;
+            padding: 14px 28px;
+            border-radius: 12px;
+            font-size: 14px;
+            font-weight: 800;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            box-shadow: 0 0 25px var(--success-glow);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .btn-confirm-live:hover {
+            transform: translateY(-2px) scale(1.02);
+            box-shadow: 0 0 35px var(--success-glow);
         }
 
         .spotlight-grid {
@@ -406,7 +435,7 @@ DASHBOARD_HTML = """
         }
 
         .stat-value {
-            font-size: 22px;
+            font-size: 20px;
             font-weight: 800;
             color: #FFFFFF;
             font-family: 'JetBrains Mono', monospace;
@@ -434,12 +463,6 @@ DASHBOARD_HTML = """
             border: 1px solid rgba(255, 184, 0, 0.4);
         }
 
-        .status-simulated {
-            background: rgba(138, 43, 226, 0.15);
-            color: #D4A5FF;
-            border: 1px solid rgba(138, 43, 226, 0.4);
-        }
-
         .pulse-dot {
             width: 8px;
             height: 8px;
@@ -453,6 +476,97 @@ DASHBOARD_HTML = """
             0% { opacity: 1; transform: scale(1); }
             50% { opacity: 0.4; transform: scale(0.85); }
             100% { opacity: 1; transform: scale(1); }
+        }
+
+        /* Prominent Verification Fallback Panel */
+        .verification-panel {
+            background: linear-gradient(135deg, rgba(14, 19, 31, 0.95) 0%, rgba(18, 24, 38, 0.95) 100%);
+            border: 2px solid rgba(0, 210, 255, 0.4);
+            border-radius: 20px;
+            padding: 24px;
+            box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6), 0 0 25px rgba(0, 210, 255, 0.15);
+            margin-bottom: 24px;
+        }
+
+        .verification-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 14px;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+
+        .verification-title {
+            font-size: 18px;
+            font-weight: 800;
+            color: #FFFFFF;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 16px;
+            margin-top: 18px;
+            margin-bottom: 20px;
+        }
+
+        .input-group {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .input-group label {
+            font-size: 12px;
+            color: var(--text-secondary);
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .input-control {
+            background: #070A12;
+            border: 1px solid rgba(0, 210, 255, 0.2);
+            padding: 12px 14px;
+            border-radius: 10px;
+            color: #FFFFFF;
+            font-size: 14px;
+            outline: none;
+            transition: all 0.2s ease;
+        }
+
+        .input-control:focus {
+            border-color: var(--electric-blue);
+            box-shadow: 0 0 12px var(--electric-blue-glow);
+        }
+
+        .quick-pills {
+            display: flex;
+            gap: 8px;
+            margin-top: 6px;
+            flex-wrap: wrap;
+        }
+
+        .pill-btn {
+            background: rgba(0, 210, 255, 0.1);
+            color: var(--electric-blue);
+            border: 1px solid rgba(0, 210, 255, 0.25);
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .pill-btn:hover {
+            background: var(--electric-blue);
+            color: #07090E;
         }
 
         .content-grid {
@@ -519,20 +633,10 @@ DASHBOARD_HTML = """
             background: rgba(0, 242, 152, 0.15);
             color: var(--success);
             border: 1px solid rgba(0, 242, 152, 0.5);
-            padding: 3px 8px;
+            padding: 4px 10px;
             border-radius: 6px;
             font-weight: 700;
-            font-size: 10px;
-        }
-
-        .badge-simulated {
-            background: rgba(138, 43, 226, 0.15);
-            color: #D4A5FF;
-            border: 1px solid rgba(138, 43, 226, 0.5);
-            padding: 3px 8px;
-            border-radius: 6px;
-            font-weight: 700;
-            font-size: 10px;
+            font-size: 11px;
         }
 
         .badge-available {
@@ -549,16 +653,6 @@ DASHBOARD_HTML = """
             background: rgba(255, 184, 0, 0.15);
             color: var(--warning);
             border: 1px solid rgba(255, 184, 0, 0.4);
-            padding: 4px 10px;
-            border-radius: 8px;
-            font-weight: 700;
-            font-size: 11px;
-        }
-
-        .badge-sold {
-            background: rgba(255, 59, 48, 0.15);
-            color: var(--danger);
-            border: 1px solid rgba(255, 59, 48, 0.4);
             padding: 4px 10px;
             border-radius: 8px;
             font-weight: 700;
@@ -618,63 +712,6 @@ DASHBOARD_HTML = """
             word-break: break-word;
         }
 
-        .info-alert {
-            background: rgba(0, 136, 204, 0.12);
-            border: 1px solid rgba(0, 210, 255, 0.25);
-            border-radius: 12px;
-            padding: 14px 18px;
-            font-size: 13px;
-            margin-bottom: 20px;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            color: #38B8FF;
-        }
-
-        .fallback-card {
-            background: rgba(18, 24, 38, 0.85);
-            border: 1px solid rgba(0, 210, 255, 0.3);
-            border-radius: 18px;
-            padding: 22px;
-            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
-            margin-bottom: 24px;
-        }
-
-        .form-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-            gap: 16px;
-            margin-top: 16px;
-            margin-bottom: 16px;
-        }
-
-        .input-group {
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-        }
-
-        .input-group label {
-            font-size: 12px;
-            color: var(--text-secondary);
-            font-weight: 600;
-        }
-
-        .input-control {
-            background: #0B0F19;
-            border: 1px solid rgba(255, 255, 255, 0.12);
-            padding: 10px 14px;
-            border-radius: 8px;
-            color: #FFFFFF;
-            font-size: 13px;
-            outline: none;
-            transition: border-color 0.2s ease;
-        }
-
-        .input-control:focus {
-            border-color: var(--electric-blue);
-        }
-
         #toast {
             position: fixed;
             bottom: 24px;
@@ -682,10 +719,10 @@ DASHBOARD_HTML = """
             background: rgba(14, 19, 31, 0.95);
             border: 1px solid var(--electric-blue);
             color: #FFFFFF;
-            padding: 14px 20px;
+            padding: 16px 24px;
             border-radius: 12px;
             box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6), 0 0 20px var(--electric-blue-glow);
-            font-size: 13px;
+            font-size: 14px;
             display: none;
             z-index: 9999;
             backdrop-filter: blur(12px);
@@ -699,34 +736,23 @@ DASHBOARD_HTML = """
             <div class="brand">
                 <div class="brand-icon">⚡</div>
                 <div class="brand-title">
-                    <h1>AVENGERS: DOOMSDAY COMMAND CENTER</h1>
-                    <p>Ritzy Sha Cinemas 4K RGB Laser & Dolby Atmos, Madurai • Telegram Channel</p>
+                    <h1>AVENGERS: DOOMSDAY BOOKING ALERT</h1>
+                    <p>Ritzy Sha Cinemas 4K RGB Laser & Dolby Atmos, Madurai • Telegram Channel Only</p>
                 </div>
             </div>
             <div class="header-actions">
-                <button class="btn btn-primary" onclick="triggerManualCheck()" id="btnCheck">
-                    <span id="checkSpinner" style="display:none;">⏳</span>
-                    <span>🔍 Check BMS Now</span>
-                </button>
+                <!-- PROMINENT BUTTON: CHECK DOOMSDAY BOOKINGS -->
+                <a href="https://in.bookmyshow.com/cinemas/madurai/ritzy-sha-cinemas-4k-rgb-laser-atmos-madurai/buytickets/RZYM" 
+                   target="_blank" 
+                   class="btn-hero-check" 
+                   id="btnCheckDoomsday">
+                    🎟️ CHECK DOOMSDAY BOOKINGS ↗
+                </a>
                 <button class="btn btn-telegram" onclick="triggerTestTelegram()">
                     <span>✈️ Test Telegram</span>
                 </button>
-                <button class="btn" onclick="simulateBookingOpen()" title="Simulate Avengers booking open for test">
-                    <span>🧪 Run Test Simulation</span>
-                </button>
             </div>
         </header>
-
-        <!-- Informational banner -->
-        <div class="info-alert">
-            <span>🛡️</span>
-            <div>
-                <strong>Three Strict Verification States:</strong> 
-                <span class="status-pill status-live" style="margin-left:6px;">LIVE VERIFIED</span> Confirmed real booking open (alerts fire).
-                <span class="status-pill status-unavailable" style="margin-left:6px;">SOURCE UNAVAILABLE</span> Cloudflare active on cloud IP (no bypass, no false alerts).
-                <span class="status-pill status-simulated" style="margin-left:6px;">SIMULATED</span> Test simulation.
-            </div>
-        </div>
 
         <!-- Spotlight & Stats Grid -->
         <div class="spotlight-grid">
@@ -736,40 +762,40 @@ DASHBOARD_HTML = """
                 </div>
                 <span class="cinema-badge">📍 Ritzy Sha Cinemas, Madurai</span>
                 <div class="movie-title">Avengers: Doomsday</div>
-                <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 8px;">Target Code: <code>RITM</code> • 4K RGB Laser Atmos</p>
-                <a href="https://in.bookmyshow.com/madurai/cinemas/ritzy-sha-cinemas-4k-rgb-laser-atmos-madurai/RITM" target="_blank" class="btn btn-table btn-primary" style="margin-top: 6px;">
-                    🔗 Open BMS Cinema Page ↗
+                <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 8px;">Cinema Code: <code>RZYM</code> • 4K RGB Laser Atmos</p>
+                <a href="https://in.bookmyshow.com/cinemas/madurai/ritzy-sha-cinemas-4k-rgb-laser-atmos-madurai/buytickets/RZYM" target="_blank" class="btn btn-table btn-primary" style="margin-top: 6px;">
+                    🔗 Open BMS Venue Page ↗
                 </a>
             </div>
 
             <div class="glass-card">
                 <div class="section-header">
                     <span class="section-title">📊 Real-Time Monitoring Telemetry</span>
-                    <span id="systemStatusPill" class="status-pill status-unavailable">
-                        <span class="pulse-dot"></span> <span id="statusText">SOURCE UNAVAILABLE</span>
+                    <span id="systemStatusPill" class="status-pill status-live">
+                        <span class="pulse-dot"></span> <span id="statusText">LIVE VERIFIED</span>
                     </span>
                 </div>
 
                 <div class="stats-grid">
                     <div class="stat-box">
-                        <span class="stat-label">Source State</span>
-                        <span class="stat-value" id="sourceStateText" style="font-size: 14px; color: var(--warning);">SOURCE UNAVAILABLE</span>
+                        <span class="stat-label">Last Verification Time</span>
+                        <span class="stat-value" id="lastVerificationTime" style="font-size: 13px; color: var(--success);">--:--:--</span>
                     </div>
                     <div class="stat-box">
-                        <span class="stat-label">Cadence</span>
-                        <span class="stat-value">5 min</span>
+                        <span class="stat-label">Next Scheduled Check</span>
+                        <span class="stat-value" id="nextScheduledCheck" style="font-size: 13px; color: var(--electric-blue);">--:--:--</span>
                     </div>
                     <div class="stat-box">
-                        <span class="stat-label">Live Verified Shows</span>
+                        <span class="stat-label">Confirmed Live Shows</span>
                         <span class="stat-value" id="liveVerifiedCount" style="color: var(--success);">0</span>
                     </div>
                     <div class="stat-box">
-                        <span class="stat-label">Simulated Shows</span>
-                        <span class="stat-value" id="simulatedCount" style="color: #D4A5FF;">0</span>
+                        <span class="stat-label">Telegram Alerts Sent</span>
+                        <span class="stat-value" id="tgAlertsCount" style="color: var(--electric-blue);">0</span>
                     </div>
                     <div class="stat-box">
-                        <span class="stat-label">Telegram Delivered</span>
-                        <span class="stat-value" id="tgAlertsCount" style="color: var(--electric-blue);">0</span>
+                        <span class="stat-label">Monitoring Cadence</span>
+                        <span class="stat-value">5 min (24/7)</span>
                     </div>
                     <div class="stat-box">
                         <span class="stat-label">Telegram Channel</span>
@@ -778,7 +804,7 @@ DASHBOARD_HTML = """
                 </div>
 
                 <div style="background: rgba(14, 19, 31, 0.9); border: 1px solid var(--border-glass); border-radius: 12px; padding: 14px; margin-top: 14px;">
-                    <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 4px;">Source Diagnostic:</div>
+                    <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 4px;">Last Automated Diagnosis:</div>
                     <div id="lastCheckResult" style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--electric-blue);">
                         Initializing monitor engine...
                     </div>
@@ -786,39 +812,61 @@ DASHBOARD_HTML = """
             </div>
         </div>
 
-        <!-- Manual Booking-Page Verification Fallback Panel -->
-        <div class="fallback-card">
-            <div class="section-header">
-                <span class="section-title">
-                    <span>🛡️</span> Manual Booking-Page Verification Fallback (RDP / Browser)
-                </span>
-                <a href="https://in.bookmyshow.com/madurai/cinemas/ritzy-sha-cinemas-4k-rgb-laser-atmos-madurai/RITM" target="_blank" class="btn btn-table btn-primary">
-                    🌐 Open Ritzy Sha on BMS
+        <!-- CONVENIENT MANUAL VERIFICATION & ONE-CLICK CONFIRMATION PANEL -->
+        <div class="verification-panel">
+            <div class="verification-header">
+                <div class="verification-title">
+                    <span>🛡️</span> Manual Booking Verification & One-Click Telegram Dispatch
+                </div>
+                <a href="https://in.bookmyshow.com/cinemas/madurai/ritzy-sha-cinemas-4k-rgb-laser-atmos-madurai/buytickets/RZYM" 
+                   target="_blank" 
+                   class="btn btn-primary" 
+                   style="font-size: 13px; font-weight: 700;">
+                    🌐 Open Ritzy Sha on BMS (RZYM) ↗
                 </a>
             </div>
-            <p style="font-size: 12px; color: var(--text-secondary); line-height: 1.5;">
-                When automated cloud VPS requests are restricted by Cloudflare Turnstile, you can visually check the booking page in your browser or Remote Desktop session. Once you confirm tickets are open, enter the showtime below and click <strong>"Confirm Live Verification & Dispatch Alert"</strong> to immediately trigger the verified Telegram booking alert!
+            <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.6;">
+                Click <strong>"CHECK DOOMSDAY BOOKINGS"</strong> above to inspect the live Ritzy Sha Cinemas page. When actual Avengers: Doomsday showtimes appear open, fill or confirm the show details below and hit <strong>"One-Click Confirm"</strong>. The verified booking alert will immediately dispatch to your Telegram bot. <em>Duplicate notifications are automatically suppressed.</em>
             </p>
+
             <div class="form-grid">
                 <div class="input-group">
                     <label>Show Date</label>
                     <input type="date" id="manualDate" class="input-control">
                 </div>
                 <div class="input-group">
-                    <label>Showtime (e.g. 06:45 PM)</label>
-                    <input type="text" id="manualTime" class="input-control" placeholder="06:45 PM">
+                    <label>
+                        <span>Showtime</span>
+                        <span style="font-size: 11px; color: var(--text-muted);">Pick quick time:</span>
+                    </label>
+                    <input type="text" id="manualTime" class="input-control" placeholder="06:45 PM" value="06:45 PM">
+                    <div class="quick-pills">
+                        <button type="button" class="pill-btn" onclick="setTime('10:15 AM')">10:15 AM</button>
+                        <button type="button" class="pill-btn" onclick="setTime('02:30 PM')">02:30 PM</button>
+                        <button type="button" class="pill-btn" onclick="setTime('06:45 PM')">06:45 PM</button>
+                        <button type="button" class="pill-btn" onclick="setTime('10:00 PM')">10:00 PM</button>
+                    </div>
                 </div>
                 <div class="input-group">
                     <label>Screen Name</label>
                     <input type="text" id="manualScreen" class="input-control" value="4K RGB Laser Atmos (Audi 1)">
                 </div>
                 <div class="input-group">
-                    <label>Direct Booking URL (Optional)</label>
-                    <input type="text" id="manualLink" class="input-control" placeholder="https://in.bookmyshow.com/booktickets/RITM/...">
+                    <label>Booking Status</label>
+                    <select id="manualStatus" class="input-control" style="background: #070A12;">
+                        <option value="AVAILABLE">AVAILABLE</option>
+                        <option value="FILLING_FAST">FILLING_FAST</option>
+                    </select>
+                </div>
+                <div class="input-group" style="grid-column: 1 / -1;">
+                    <label>Direct Booking URL</label>
+                    <input type="text" id="manualLink" class="input-control" value="https://in.bookmyshow.com/cinemas/madurai/ritzy-sha-cinemas-4k-rgb-laser-atmos-madurai/buytickets/RZYM">
                 </div>
             </div>
-            <button class="btn btn-success" onclick="submitManualVerification()">
-                <span>✅ Confirm Live Verification & Dispatch Alert</span>
+
+            <!-- ONE-CLICK CONFIRMATION BUTTON -->
+            <button class="btn-confirm-live" onclick="submitOneClickConfirmation()" id="btnConfirmLive">
+                <span>⚡ CONFIRM BOOKINGS OPEN & SEND TELEGRAM ALERT</span>
             </button>
         </div>
 
@@ -826,7 +874,7 @@ DASHBOARD_HTML = """
         <div class="content-grid">
             <div class="glass-card">
                 <div class="section-header">
-                    <span class="section-title">🎟️ Tracked Showtimes & Verification Mode</span>
+                    <span class="section-title">🎟️ Confirmed Live Showtimes (Deduplicated)</span>
                     <span style="font-size: 12px; color: var(--text-secondary);" id="totalShowsSummary">0 shows tracked</span>
                 </div>
                 <div class="table-wrap">
@@ -835,7 +883,7 @@ DASHBOARD_HTML = """
                             <tr>
                                 <th>Date</th>
                                 <th>Showtime</th>
-                                <th>Verification Mode</th>
+                                <th>Verification</th>
                                 <th>Status</th>
                                 <th>Telegram Alert</th>
                                 <th>Action</th>
@@ -844,7 +892,7 @@ DASHBOARD_HTML = """
                         <tbody id="showsTableBody">
                             <tr>
                                 <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 30px;">
-                                    No Avengers: Doomsday showtimes detected yet.
+                                    No live verified showtimes yet. Use the verification form above once bookings open.
                                 </td>
                             </tr>
                         </tbody>
@@ -854,7 +902,7 @@ DASHBOARD_HTML = """
 
             <div class="glass-card">
                 <div class="section-header">
-                    <span class="section-title">📜 System Diagnostics & Activity Stream</span>
+                    <span class="section-title">📜 Real-Time Diagnostics & Audit Log</span>
                     <button class="btn" style="padding: 4px 10px; font-size: 11px;" onclick="loadDashboardData()">🔄 Refresh</button>
                 </div>
                 <div class="log-container" id="logsContainer">
@@ -873,11 +921,16 @@ DASHBOARD_HTML = """
     <script>
         document.getElementById('manualDate').valueAsDate = new Date();
 
-        function showToast(msg) {
+        function setTime(t) {
+            document.getElementById('manualTime').value = t;
+        }
+
+        function showToast(msg, isSuccess = true) {
             const t = document.getElementById('toast');
             t.innerText = msg;
+            t.style.borderColor = isSuccess ? '#00F298' : '#FFB800';
             t.style.display = 'block';
-            setTimeout(() => { t.style.display = 'none'; }, 4000);
+            setTimeout(() => { t.style.display = 'none'; }, 5000);
         }
 
         async function loadDashboardData() {
@@ -885,26 +938,24 @@ DASHBOARD_HTML = """
                 const res = await fetch('/api/status');
                 const data = await res.json();
 
+                document.getElementById('lastVerificationTime').innerText = data.stats.last_verification_time || 'Not yet verified';
+                document.getElementById('nextScheduledCheck').innerText = data.stats.next_scheduled_check || 'In 5 minutes';
                 document.getElementById('lastCheckResult').innerText = data.stats.last_check_result || 'N/A';
                 document.getElementById('liveVerifiedCount').innerText = data.stats.live_verified_count || 0;
-                document.getElementById('simulatedCount').innerText = data.stats.simulated_count || 0;
                 document.getElementById('tgAlertsCount').innerText = data.stats.tg_sent || 0;
-
-                const sourceState = data.stats.source_state || 'SOURCE_UNAVAILABLE';
-                document.getElementById('sourceStateText').innerText = sourceState;
 
                 const statusPill = document.getElementById('systemStatusPill');
                 const statusText = document.getElementById('statusText');
+                const sourceState = data.stats.source_state || 'SOURCE_UNAVAILABLE';
                 statusText.innerText = sourceState;
 
                 if (sourceState === 'LIVE_VERIFIED') {
                     statusPill.className = 'status-pill status-live';
-                } else if (sourceState === 'SOURCE_UNAVAILABLE') {
-                    statusPill.className = 'status-pill status-unavailable';
                 } else {
-                    statusPill.className = 'status-pill status-simulated';
+                    statusPill.className = 'status-pill status-unavailable';
                 }
 
+                // Render Shows Table
                 const tbody = document.getElementById('showsTableBody');
                 if (data.shows && data.shows.length > 0) {
                     document.getElementById('totalShowsSummary').innerText = `${data.shows.length} shows tracked`;
@@ -913,11 +964,8 @@ DASHBOARD_HTML = """
                         if (s.booking_status === 'FILLING_FAST') badgeClass = 'badge-fast';
                         if (s.booking_status === 'SOLD_OUT') badgeClass = 'badge-sold';
 
-                        const modeBadge = s.verification_mode === 'LIVE_VERIFIED' 
-                            ? '<span class="badge-live-verified">🟢 LIVE VERIFIED</span>'
-                            : '<span class="badge-simulated">🟣 SIMULATED</span>';
-
-                        const tgSent = s.telegram_alert_sent ? '✅ Sent' : '⏳ Pending';
+                        const modeBadge = '<span class="badge-live-verified">🟢 LIVE VERIFIED</span>';
+                        const tgSent = s.telegram_alert_sent ? '✅ Delivered' : '⏳ Pending';
 
                         return `
                             <tr>
@@ -928,7 +976,7 @@ DASHBOARD_HTML = """
                                 <td style="font-size: 11px;">${tgSent}</td>
                                 <td>
                                     <a href="${s.booking_link}" target="_blank" class="btn btn-table btn-primary">
-                                        Book Now ↗
+                                        Book Tickets ↗
                                     </a>
                                 </td>
                             </tr>
@@ -939,12 +987,13 @@ DASHBOARD_HTML = """
                     tbody.innerHTML = `
                         <tr>
                             <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 30px;">
-                                No Avengers: Doomsday showtimes detected yet.
+                                No live verified showtimes yet.
                             </td>
                         </tr>
                     `;
                 }
 
+                // Render Logs
                 const logContainer = document.getElementById('logsContainer');
                 if (data.logs && data.logs.length > 0) {
                     logContainer.innerHTML = data.logs.map(l => `
@@ -959,62 +1008,34 @@ DASHBOARD_HTML = """
             }
         }
 
-        async function triggerManualCheck() {
-            const btn = document.getElementById('btnCheck');
-            const spinner = document.getElementById('checkSpinner');
-            spinner.style.display = 'inline';
-            btn.disabled = true;
-
-            showToast("🔍 Probing BookMyShow venue page...");
-            try {
-                const res = await fetch('/api/check-now', { method: 'POST' });
-                const r = await res.json();
-                showToast("Check completed: " + (r.result?.last_check_result || "Success"));
-                await loadDashboardData();
-            } catch (e) {
-                showToast("Error executing scan: " + e);
-            } finally {
-                spinner.style.display = 'none';
-                btn.disabled = false;
-            }
-        }
-
         async function triggerTestTelegram() {
-            showToast("🚀 Sending test alert to Telegram...");
+            showToast("🚀 Sending test ping to Telegram...");
             try {
                 const res = await fetch('/api/test/telegram', { method: 'POST' });
                 const r = await res.json();
                 showToast(r.success ? "Telegram notification delivered!" : "Telegram failed: " + r.message);
                 await loadDashboardData();
             } catch (e) {
-                showToast("Failed to test Telegram: " + e);
+                showToast("Failed to test Telegram: " + e, false);
             }
         }
 
-        async function simulateBookingOpen() {
-            showToast("🧪 Running simulation test [SIMULATED ONLY]...");
-            try {
-                const res = await fetch('/api/simulate-show', { method: 'POST' });
-                const r = await res.json();
-                showToast("Simulation generated! Alert dispatched as SIMULATED to Telegram.");
-                await loadDashboardData();
-            } catch (e) {
-                showToast("Simulation failed: " + e);
-            }
-        }
-
-        async function submitManualVerification() {
+        async function submitOneClickConfirmation() {
             const date = document.getElementById('manualDate').value;
             const time = document.getElementById('manualTime').value;
             const screen = document.getElementById('manualScreen').value;
             const link = document.getElementById('manualLink').value;
+            const status = document.getElementById('manualStatus').value;
 
             if (!date || !time) {
-                alert("Please provide both Show Date and Showtime.");
+                alert("Please select both Show Date and Showtime.");
                 return;
             }
 
-            showToast("Confirming LIVE VERIFIED booking open...");
+            const btn = document.getElementById('btnConfirmLive');
+            btn.disabled = true;
+            btn.innerText = "⏳ CONFIRMING & DISPATCHING ALERT...";
+
             try {
                 const res = await fetch('/api/manual-verify', {
                     method: 'POST',
@@ -1024,14 +1045,22 @@ DASHBOARD_HTML = """
                         show_time: time,
                         screen_name: screen,
                         booking_link: link || undefined,
-                        booking_status: "AVAILABLE"
+                        booking_status: status
                     })
                 });
                 const r = await res.json();
-                showToast("Confirmed! Live booking alert dispatched to Telegram!");
+
+                if (r.duplicate) {
+                    showToast(`⚠️ Duplicate Suppressed: This showtime was already alerted at ${r.alert_timestamp}.`, false);
+                } else {
+                    showToast(`🚨 CONFIRMED! Telegram booking alert dispatched immediately!`, true);
+                }
                 await loadDashboardData();
             } catch (e) {
-                showToast("Manual verification failed: " + e);
+                showToast("Verification request failed: " + e, false);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = "<span>⚡ CONFIRM BOOKINGS OPEN & SEND TELEGRAM ALERT</span>";
             }
         }
 
@@ -1056,10 +1085,12 @@ async def dashboard_index():
 async def get_system_status():
     stats = db.get_summary_stats()
     shows = db.get_all_detected_shows(limit=50)
+    # Filter shows for dashboard so only LIVE_VERIFIED shows are presented
+    live_shows = [s for s in shows if s.get("verification_mode") == "LIVE_VERIFIED"]
     logs = db.get_recent_logs(limit=40)
     return {
         "stats": stats,
-        "shows": shows,
+        "shows": live_shows,
         "logs": logs,
         "telegram_configured": Config.is_telegram_configured(),
     }
@@ -1084,57 +1115,36 @@ async def test_telegram():
 @app.post("/api/manual-verify")
 async def manual_verify(req: ManualVerifyRequest, background_tasks: BackgroundTasks):
     """
-    Operator Manual Verification Fallback:
-    Records an official LIVE_VERIFIED showtime and triggers the verified booking alert.
+    Operator One-Click Verification Fallback:
+    1. Checks if this exact showtime was already alerted (prevents duplicates).
+    2. Records an official LIVE_VERIFIED showtime in SQLite.
+    3. Immediately dispatches the real booking alert to Telegram.
+    4. Updates last verification timestamp.
     """
-    show_id, is_new, show_record = monitor.record_manual_verification(
+    show_id, is_new, is_duplicate, show_record, prev_time = monitor.record_manual_verification(
         show_date=req.show_date,
         show_time=req.show_time,
         booking_link=req.booking_link,
         screen_name=req.screen_name or "4K RGB Laser Atmos (Audi 1)",
         booking_status=req.booking_status or "AVAILABLE",
     )
+
+    if is_duplicate:
+        return {
+            "status": "duplicate_suppressed",
+            "duplicate": True,
+            "message": f"Showtime {req.show_date} {req.show_time} was already alerted at {prev_time}. Duplicate notification suppressed.",
+            "alert_timestamp": prev_time,
+        }
+
+    # Dispatch immediately
     background_tasks.add_task(dispatch_pending_alerts)
     return {
-        "status": "success",
+        "status": "confirmed_and_dispatched",
+        "duplicate": False,
         "show_id": show_id,
         "verification_mode": "LIVE_VERIFIED",
         "show": show_record,
-    }
-
-
-@app.post("/api/simulate-show")
-async def simulate_show(background_tasks: BackgroundTasks):
-    """
-    Simulation endpoint to verify the notification pipeline.
-    Marks the show explicitly as SIMULATED so the user knows it's a test.
-    """
-    tomorrow = (datetime.date.today() + datetime.timedelta(days=1)).strftime("%Y-%m-%d")
-    mock_show = {
-        "cinema_name": Config.CINEMA_NAME,
-        "cinema_code": Config.CINEMA_CODE,
-        "movie_title": Config.MOVIE_TITLE,
-        "show_date": tomorrow,
-        "show_time": "06:45 PM",
-        "screen_name": "4K RGB Laser Atmos (Audi 1)",
-        "session_id": "SIM998877",
-        "booking_status": "AVAILABLE",
-        "booking_link": f"https://in.bookmyshow.com/booktickets/{Config.CINEMA_CODE}/SIM998877",
-        "verification_mode": "SIMULATED",
-    }
-    show_id, is_new, is_bookable = db.record_showtime(mock_show)
-    db.log_event(
-        "INFO",
-        "CHECK",
-        f"Simulated show created for {mock_show['movie_title']} ({mock_show['show_date']} {mock_show['show_time']}) [SIMULATED]",
-    )
-    background_tasks.add_task(dispatch_pending_alerts)
-    return {
-        "status": "success",
-        "show_id": show_id,
-        "is_new": is_new,
-        "verification_mode": "SIMULATED",
-        "show": mock_show,
     }
 
 
