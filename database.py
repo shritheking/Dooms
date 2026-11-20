@@ -310,6 +310,38 @@ class Database:
         finally:
             conn.close()
 
+    def is_already_alerted(
+        self,
+        show_date: str,
+        show_time: str,
+        screen_name: str,
+        cinema_code: Optional[str] = None,
+        movie_title: Optional[str] = None,
+    ) -> Tuple[bool, Optional[str]]:
+        """
+        Check whether an alert has already been dispatched for this exact showtime.
+        Returns: (is_alerted, alert_timestamp)
+        """
+        code = cinema_code or Config.CINEMA_CODE
+        title = movie_title or Config.MOVIE_TITLE
+        conn = get_connection(self.db_path)
+        try:
+            cur = conn.execute(
+                """
+                SELECT telegram_alert_sent, telegram_alert_time
+                FROM detected_shows
+                WHERE cinema_code = ? AND movie_title = ? AND show_date = ? 
+                  AND show_time = ? AND screen_name = ? AND telegram_alert_sent = 1
+                """,
+                (code, title, show_date, show_time, screen_name),
+            )
+            row = cur.fetchone()
+            if row:
+                return True, row["telegram_alert_time"]
+            return False, None
+        finally:
+            conn.close()
+
     def get_summary_stats(self) -> Dict[str, Any]:
         """Return aggregated stats with explicit verification status breakdown."""
         conn = get_connection(self.db_path)
@@ -330,6 +362,8 @@ class Database:
             stats["source_state"] = self.get_status("source_state", "SOURCE_UNAVAILABLE")
             stats["last_check_time"] = self.get_status("last_check_time", "Never")
             stats["last_check_result"] = self.get_status("last_check_result", "No checks yet")
+            stats["last_verification_time"] = self.get_status("last_verification_time", "Not yet verified")
+            stats["next_scheduled_check"] = self.get_status("next_scheduled_check", "Pending")
             return stats
         finally:
             conn.close()
