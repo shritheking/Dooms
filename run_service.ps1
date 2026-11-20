@@ -31,15 +31,17 @@ Write-Host " Dashboard URL: http://localhost:8080" -ForegroundColor Yellow
 Write-Host " Log File: $LogFile" -ForegroundColor Gray
 Write-Host "=================================================================" -ForegroundColor Cyan
 
+$ErrorActionPreference = "Continue"
+
 # Continuous execution loop with recovery
 while ($true) {
     try {
         $Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
         Add-Content -Path $LogFile -Value "[$Timestamp] Starting Avengers Booking Bot process..."
         
-        & $VenvPython "main.py" 2>&1 | Tee-Object -FilePath $LogFile -Append
+        $proc = Start-Process -FilePath $VenvPython -ArgumentList "main.py" -WorkingDirectory $ScriptDir -NoNewWindow -PassThru -Wait
+        $ExitCode = $proc.ExitCode
         
-        $ExitCode = $LASTEXITCODE
         $Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
         Add-Content -Path $LogFile -Value "[$Timestamp] Process exited with code $ExitCode. Restarting in 10 seconds..."
         Write-Host "Process exited ($ExitCode). Restarting in 10 seconds..." -ForegroundColor DarkYellow
@@ -47,7 +49,8 @@ while ($true) {
     }
     catch {
         $ErrMsg = $_.Exception.Message
-        Add-Content -Path $LogFile -Value "[ERROR] Watchdog caught error: $ErrMsg"
+        $Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+        Add-Content -Path $LogFile -Value "[$Timestamp] [ERROR] Watchdog caught error: $ErrMsg"
         Start-Sleep -Seconds 10
     }
 }
