@@ -29,14 +29,14 @@ class Config:
     # -------------------------------------------------------------
     MOVIE_TITLE: str = os.getenv("MOVIE_TITLE", "Avengers: Doomsday").strip()
     CINEMA_NAME: str = os.getenv("CINEMA_NAME", "Ritzy Sha Cinemas").strip()
-    CINEMA_CODE: str = os.getenv("CINEMA_CODE", "RITM").strip()
+    CINEMA_CODE: str = os.getenv("CINEMA_CODE", "RZYM").strip()
     LOCATION_CITY: str = os.getenv("LOCATION_CITY", "Madurai").strip()
     LOCATION_STATE: str = os.getenv("LOCATION_STATE", "Tamil Nadu, India").strip()
 
-    # BookMyShow Venue URL
+    # BookMyShow Venue URL (Ritzy Sha Cinemas Madurai)
     BMS_VENUE_URL: str = os.getenv(
         "BMS_VENUE_URL",
-        "https://in.bookmyshow.com/madurai/cinemas/ritzy-sha-cinemas-4k-rgb-laser-atmos-madurai/RITM",
+        "https://in.bookmyshow.com/cinemas/madurai/ritzy-sha-cinemas-4k-rgb-laser-atmos-madurai/buytickets/RZYM",
     ).strip()
 
     # Monitoring timing (5 minutes = 300 seconds)
