@@ -1,6 +1,7 @@
 """
 Telegram Bot integration module for Avengers: Doomsday Booking Alert Bot.
 Handles sending alerts, test notifications, and polling for user commands (/start, /status, /test, /check).
+Clearly distinguishes LIVE_VERIFIED alerts from SIMULATED test alerts to prevent false positives.
 """
 
 import time
@@ -58,18 +59,8 @@ class TelegramBot:
 
     def send_alert(self, show: Dict[str, Any], chat_id: Optional[str] = None) -> bool:
         """
-        Send formatted booking alert adhering strictly to the required template:
-        🚨 AVENGERS: DOOMSDAY BOOKING OPEN!
-
-        Cinema: Ritzy Sha Cinemas
-        Location: Madurai
-        Movie: Avengers: Doomsday
-        Show Date: [Detected date]
-        Showtime: [Detected time]
-        Booking Status: AVAILABLE
-
-        🎟️ BOOK YOUR TICKETS:
-        [Direct booking link]
+        Send formatted booking alert.
+        Strictly differentiates between LIVE_VERIFIED and SIMULATED to avoid false positives.
         """
         cinema = show.get("cinema_name", Config.CINEMA_NAME)
         location = Config.LOCATION_CITY
@@ -78,18 +69,33 @@ class TelegramBot:
         show_time = show.get("show_time", "N/A")
         status = show.get("booking_status", "AVAILABLE")
         booking_link = show.get("booking_link", Config.BMS_VENUE_URL)
+        mode = show.get("verification_mode", "LIVE_VERIFIED").upper()
 
-        message = (
-            f"🚨 AVENGERS: DOOMSDAY BOOKING OPEN!\n\n"
-            f"Cinema: {cinema}\n"
-            f"Location: {location}\n"
-            f"Movie: {movie}\n"
-            f"Show Date: {show_date}\n"
-            f"Showtime: {show_time}\n"
-            f"Booking Status: {status}\n\n"
-            f"🎟️ BOOK YOUR TICKETS:\n"
-            f"{booking_link}"
-        )
+        if mode == "SIMULATED":
+            message = (
+                f"🧪 [SIMULATED TEST] AVENGERS: DOOMSDAY ALERT TEST\n\n"
+                f"Cinema: {cinema}\n"
+                f"Location: {location}\n"
+                f"Movie: {movie}\n"
+                f"Show Date: {show_date}\n"
+                f"Showtime: {show_time}\n"
+                f"Status: SIMULATED (No real booking opened)\n\n"
+                f"⚠️ Note: This is an intentional simulation to test notification delivery.\n"
+                f"Direct link: {booking_link}"
+            )
+        else:
+            # LIVE_VERIFIED
+            message = (
+                f"🚨 AVENGERS: DOOMSDAY BOOKING OPEN! [LIVE VERIFIED]\n\n"
+                f"Cinema: {cinema}\n"
+                f"Location: {location}\n"
+                f"Movie: {movie}\n"
+                f"Show Date: {show_date}\n"
+                f"Showtime: {show_time}\n"
+                f"Booking Status: {status} (CONFIRMED)\n\n"
+                f"🎟️ BOOK YOUR TICKETS:\n"
+                f"{booking_link}"
+            )
 
         return self.send_message(
             text=message,
@@ -102,10 +108,11 @@ class TelegramBot:
         test_show = {
             "cinema_name": Config.CINEMA_NAME,
             "movie_title": Config.MOVIE_TITLE,
-            "show_date": "2026-05-01 (TEST VERIFICATION)",
-            "show_time": "07:00 PM (TEST)",
+            "show_date": "2026-05-01",
+            "show_time": "07:00 PM",
             "booking_status": "AVAILABLE",
             "booking_link": Config.BMS_VENUE_URL,
+            "verification_mode": "SIMULATED",
         }
         success = self.send_alert(test_show, chat_id=chat_id)
         return {
@@ -179,14 +186,18 @@ class TelegramBot:
         if cmd == "/start":
             welcome_msg = (
                 f"🛡️ *Avengers: Doomsday Booking Alert Bot*\n\n"
-                f"Monitoring Target:\n"
+                f"Target Cinema:\n"
                 f"• *Movie:* {Config.MOVIE_TITLE}\n"
                 f"• *Cinema:* {Config.CINEMA_NAME} ({Config.CINEMA_CODE})\n"
                 f"• *Location:* {Config.LOCATION_CITY}, {Config.LOCATION_STATE}\n"
-                f"• *Interval:* Every {Config.CHECK_INTERVAL_SECONDS // 60} mins\n\n"
-                f"Available Commands:\n"
-                f"/status - View current monitor status & statistics\n"
-                f"/test - Send a test booking alert\n"
+                f"• *Cadence:* Every {Config.CHECK_INTERVAL_SECONDS // 60} mins\n\n"
+                f"Status Verification Modes:\n"
+                f"🟢 *LIVE VERIFIED* — Real ticket bookings confirmed.\n"
+                f"🟠 *SOURCE UNAVAILABLE* — Cloudflare restriction on cloud VPS IP.\n"
+                f"🟣 *SIMULATED* — Test simulation format.\n\n"
+                f"Commands:\n"
+                f"/status - View current monitor status & diagnosis\n"
+                f"/test - Send a test simulation alert\n"
                 f"/check - Trigger an immediate booking check\n"
             )
             self.send_message(welcome_msg, chat_id=chat_id, parse_mode="Markdown")
@@ -194,24 +205,25 @@ class TelegramBot:
         elif cmd == "/status":
             stats = db.get_summary_stats()
             status_text = (
-                f"📊 *System Monitoring Status*\n\n"
-                f"• *Engine Status:* `{stats.get('monitoring_status', 'UNKNOWN')}`\n"
-                f"• *Last Check:* `{stats.get('last_check_time', 'Never')}`\n"
-                f"• *Last Result:* `{stats.get('last_check_result', 'N/A')}`\n"
-                f"• *Total Shows Logged:* `{stats.get('total_shows', 0)}`\n"
-                f"• *Bookable Shows:* `{stats.get('available_shows', 0)}`\n"
-                f"• *Telegram Alerts Delivered:* `{stats.get('tg_sent', 0)}`\n"
-                f"• *WhatsApp Alerts Delivered:* `{stats.get('wa_sent', 0)}`\n"
+                f"📊 *System Monitoring Telemetry*\n\n"
+                f"• *Source State:* `{stats.get('source_state', 'SOURCE_UNAVAILABLE')}`\n"
+                f"• *Last Check Time:* `{stats.get('last_check_time', 'Never')}`\n"
+                f"• *Last Result:* `{stats.get('last_check_result', 'N/A')}`\n\n"
+                f"Showtimes Breakdown:\n"
+                f"• *Live Verified Shows:* `{stats.get('live_verified_count', 0)}`\n"
+                f"• *Simulated Shows:* `{stats.get('simulated_count', 0)}`\n"
+                f"• *Telegram Alerts Delivered:* `{stats.get('tg_sent', 0)}`\n\n"
+                f"ℹ️ *Cloudflare Status:* BookMyShow restricts automated cloud VPS requests. Use the manual verification fallback on the dashboard or RDP browser to confirm live openings."
             )
             self.send_message(status_text, chat_id=chat_id, parse_mode="Markdown")
 
         elif cmd == "/test":
-            self.send_message("🚀 Sending test booking alert...", chat_id=chat_id)
+            self.send_message("🧪 Sending test simulation alert...", chat_id=chat_id)
             self.send_test_message(chat_id=chat_id)
 
         elif cmd == "/check":
             self.send_message(
-                "🔍 Triggering immediate check on BookMyShow...", chat_id=chat_id
+                "🔍 Checking BookMyShow venue page...", chat_id=chat_id
             )
             if on_manual_check:
                 threading.Thread(target=on_manual_check, daemon=True).start()
