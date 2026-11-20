@@ -1,8 +1,9 @@
 """
 Monitoring engine for Avengers: Doomsday at Ritzy Sha Cinemas, Madurai.
-Uses Playwright and BeautifulSoup/HTML parsing to check showtimes across dates,
-detect bookable states, and avoid false positives.
-Complies strictly with safety rules: never bypasses CAPTCHA/anti-bot restrictions.
+Uses Playwright and BeautifulSoup/HTML parsing to check showtimes across dates.
+Enforces strict anti-bot compliance: NEVER bypasses Cloudflare CAPTCHAs or anti-bot restrictions.
+Accurately categorizes state as LIVE_VERIFIED or SOURCE_UNAVAILABLE to eliminate false alerts.
+Includes a Manual Booking-Page Verification Fallback for Remote Desktop operators.
 """
 
 import json
@@ -10,7 +11,7 @@ import re
 import datetime
 import logging
 from typing import List, Dict, Any, Optional, Tuple
-from playwright.async_api import async_playwright, Browser, BrowserContext, Page
+from playwright.async_api import async_playwright, Page
 from config import Config
 
 logger = logging.getLogger("monitor")
@@ -27,7 +28,7 @@ class BookingMonitor:
         self.base_venue_url = Config.BMS_VENUE_URL
 
     def generate_target_dates(self, days_horizon: Optional[int] = None) -> List[str]:
-        """Generate list of date strings in YYYYMMDD and YYYY-MM-DD formats for the monitoring horizon."""
+        """Generate list of date strings in YYYYMMDD format for the monitoring horizon."""
         horizon = days_horizon or Config.MONITORING_HORIZON_DAYS
         today = datetime.date.today()
         dates = []
@@ -51,12 +52,11 @@ class BookingMonitor:
         if t_clean in c_clean or c_clean in t_clean:
             return True
 
-        # Check keyword parts: "avengers" and "doomsday"
         words = [w for w in re.split(r"\W+", target_title.lower()) if len(w) > 2]
         return all(w in candidate_title.lower() for w in words)
 
     def parse_html_for_shows(
-        self, html_content: str, date_str: str
+        self, html_content: str, date_str: str, verification_mode: str = "LIVE_VERIFIED"
     ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         """
         Parse HTML or JSON state from a BookMyShow venue page.
@@ -68,7 +68,6 @@ class BookingMonitor:
             "cloudflare_blocked": False,
             "page_found": True,
             "movie_listed": False,
-            "raw_matches_count": 0,
         }
         shows: List[Dict[str, Any]] = []
 
@@ -90,24 +89,23 @@ class BookingMonitor:
             try:
                 json_str = next_data_match.group(1).strip()
                 data = json.loads(json_str)
-                extracted_shows = self._extract_from_next_data(data, date_str)
+                extracted_shows = self._extract_from_next_data(data, date_str, verification_mode)
                 if extracted_shows:
                     return extracted_shows, meta
             except Exception as e:
                 logger.debug(f"Failed to parse __NEXT_DATA__: {e}")
 
-        # 3. DOM Regex/Heuristic extraction for standard BMS HTML layouts
-        extracted_shows = self._extract_from_dom_html(html_content, date_str, meta)
+        # 3. DOM Regex extraction for standard BMS HTML layouts
+        extracted_shows = self._extract_from_dom_html(html_content, date_str, meta, verification_mode)
         return extracted_shows, meta
 
     def _extract_from_next_data(
-        self, data: Dict[str, Any], date_str: str
+        self, data: Dict[str, Any], date_str: str, verification_mode: str
     ) -> List[Dict[str, Any]]:
         """Extract movie showtimes from BookMyShow Next.js pageProps."""
         detected = []
         page_props = data.get("props", {}).get("pageProps", {})
 
-        # BMS often structures showtimes under showsData, venueShows, or movies list
         movies_data = (
             page_props.get("showsData", {})
             or page_props.get("movies", [])
@@ -131,7 +129,6 @@ class BookingMonitor:
             if not self.is_title_match(movie_name, self.target_movie):
                 continue
 
-            # Found target movie! Look for showtimes
             shows_list = (
                 movie_entry.get("shows")
                 or movie_entry.get("arrShowTimes")
@@ -156,8 +153,6 @@ class BookingMonitor:
                     or "AVAILABLE"
                 ).upper()
 
-                # Normalize availability
-                # In BMS: "A" = Available, "F" = Fast Filling, "AL" = Almost Full, "Sold Out"
                 if raw_status in ("A", "AVAILABLE"):
                     booking_status = "AVAILABLE"
                 elif raw_status in ("F", "FILLING_FAST", "AL"):
@@ -174,7 +169,6 @@ class BookingMonitor:
                 )
                 session_id = str(show_item.get("SessionId") or show_item.get("id") or "")
 
-                # Construct direct booking link if available
                 direct_link = (
                     f"https://in.bookmyshow.com/booktickets/{self.cinema_code}/{session_id}"
                     if session_id
@@ -191,12 +185,13 @@ class BookingMonitor:
                     "session_id": session_id,
                     "booking_status": booking_status,
                     "booking_link": direct_link,
+                    "verification_mode": verification_mode,
                 })
 
         return detected
 
     def _extract_from_dom_html(
-        self, html_content: str, date_str: str, meta: Dict[str, Any]
+        self, html_content: str, date_str: str, meta: Dict[str, Any], verification_mode: str
     ) -> List[Dict[str, Any]]:
         """Fallback DOM-based parser for rendered BMS venue HTML."""
         detected = []
@@ -206,15 +201,11 @@ class BookingMonitor:
             else date_str
         )
 
-        # Split into movie container blocks (BMS uses elements with movie names or data-event-code)
-        # We search if target movie name exists in HTML
         if not self.is_title_match(html_content, self.target_movie):
             return detected
 
         meta["movie_listed"] = True
 
-        # Regex search for showtime buttons associated with the movie
-        # Matches patterns like data-session-id="...", data-availability="A", text="10:15 AM"
         show_pill_pattern = re.compile(
             r'<(?:a|button|div)[^>]*?(?:class="[^"]*?showtime-pill[^"]*?"|data-session-id="([^"]*)")[^>]*?>\s*([\d]{1,2}:[\d]{2}\s*(?:AM|PM|am|pm)?)\s*</(?:a|button|div)>',
             re.IGNORECASE,
@@ -224,7 +215,6 @@ class BookingMonitor:
             session_id = match.group(1) or ""
             show_time = match.group(2).strip()
 
-            # Inspect surrounding 200 characters for availability markers
             start_pos = max(0, match.start() - 100)
             end_pos = min(len(html_content), match.end() + 100)
             snippet = html_content[start_pos:end_pos].lower()
@@ -252,6 +242,7 @@ class BookingMonitor:
                 "session_id": session_id,
                 "booking_status": status,
                 "booking_link": direct_link,
+                "verification_mode": verification_mode,
             })
 
         return detected
@@ -264,22 +255,21 @@ class BookingMonitor:
         logger.info(f"Checking date {date_yyyymmdd} at {url}")
 
         try:
-            resp = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            resp = await page.goto(url, wait_until="domcontentloaded", timeout=25000)
             status_code = resp.status if resp else 0
 
-            # Wait briefly for client-side hydration
-            await page.wait_for_timeout(2500)
+            await page.wait_for_timeout(2000)
 
             title = await page.title()
             content = await page.content()
 
             if status_code == 403 or "challenge" in content.lower() or "just a moment..." in title.lower():
                 logger.warning(
-                    f"Date {date_yyyymmdd}: Cloudflare bot protection active on {url} (HTTP {status_code})."
+                    f"Date {date_yyyymmdd}: Cloudflare bot restriction active on {url} (HTTP {status_code})."
                 )
                 return [], {"cloudflare_blocked": True, "status_code": status_code}
 
-            shows, meta = self.parse_html_for_shows(content, date_yyyymmdd)
+            shows, meta = self.parse_html_for_shows(content, date_yyyymmdd, "LIVE_VERIFIED")
             return shows, meta
 
         except Exception as e:
@@ -289,7 +279,8 @@ class BookingMonitor:
     async def run_full_scan(self) -> Dict[str, Any]:
         """
         Execute full scan across all target dates in the monitoring horizon.
-        Records shows in the database and prevents duplicate alerts.
+        Accurately records SOURCE_UNAVAILABLE when Cloudflare is encountered.
+        Never generates false-positive alerts.
         """
         target_dates = self.generate_target_dates()
         all_detected_shows = []
@@ -316,7 +307,6 @@ class BookingMonitor:
                 )
                 page = await context.new_page()
 
-                # Iterate through dates; if first check is Cloudflare-blocked, avoid useless hammering
                 for idx, date_str in enumerate(target_dates):
                     shows, meta = await self.scan_single_date(page, date_str)
 
@@ -330,7 +320,6 @@ class BookingMonitor:
                     if shows:
                         for s in shows:
                             all_detected_shows.append(s)
-                            # Persist to database
                             show_id, is_new, is_bookable = self.db.record_showtime(s)
                             if is_new or is_bookable:
                                 self.db.log_event(
@@ -339,7 +328,6 @@ class BookingMonitor:
                                     f"Detected {s['booking_status']} show for {s['movie_title']} on {s['show_date']} {s['show_time']}",
                                 )
 
-                    # Small polite interval between dates
                     await page.wait_for_timeout(1000)
 
             except Exception as e:
@@ -349,31 +337,32 @@ class BookingMonitor:
                 if browser:
                     await browser.close()
 
-        # Update system status in database
         now_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
         self.db.set_status("last_check_time", now_str)
 
         if cf_blocked:
-            self.db.set_status("monitoring_status", "BLOCKED_BY_CLOUDFLARE")
+            self.db.set_status("monitoring_status", "SOURCE_UNAVAILABLE")
+            self.db.set_status("source_state", "SOURCE_UNAVAILABLE")
             self.db.set_status(
                 "last_check_result",
-                "Cloudflare Turnstile challenge returned (HTTP 403 on Cloud VPS). Anti-bot bypass was NOT attempted. Residential proxy recommended in .env.",
+                "SOURCE_UNAVAILABLE: Cloudflare Turnstile protection active on BookMyShow (Cloud VPS IP). Anti-bot bypass disabled per policy. Manual verification fallback active.",
             )
             self.db.log_event(
                 "WARNING",
                 "BLOCKED",
-                "Cloudflare Turnstile challenge returned on BookMyShow. Safe monitoring preserved without illegal bypass.",
+                "Automated check met Cloudflare Turnstile. Status set to SOURCE_UNAVAILABLE without bypass.",
             )
         elif error_msg:
             self.db.set_status("monitoring_status", "ERROR")
             self.db.set_status("last_check_result", f"Error: {error_msg}")
         else:
+            self.db.set_status("monitoring_status", "LIVE_VERIFIED" if all_detected_shows else "ACTIVE")
+            self.db.set_status("source_state", "LIVE_VERIFIED" if all_detected_shows else "ACCESSIBLE")
             status_text = (
-                f"Scan complete. Found {len(all_detected_shows)} {Config.MOVIE_TITLE} showtimes."
+                f"LIVE_VERIFIED: Found {len(all_detected_shows)} {Config.MOVIE_TITLE} showtimes."
                 if all_detected_shows
-                else f"Scan complete. {Config.MOVIE_TITLE} ticket booking not yet open."
+                else f"ACCESSIBLE: Scan complete. {Config.MOVIE_TITLE} ticket booking not yet open."
             )
-            self.db.set_status("monitoring_status", "ACTIVE")
             self.db.set_status("last_check_result", status_text)
 
         return {
@@ -381,5 +370,47 @@ class BookingMonitor:
             "dates_checked": len(target_dates) if not cf_blocked else 1,
             "detected_shows": all_detected_shows,
             "cloudflare_blocked": cf_blocked,
+            "source_status": "SOURCE_UNAVAILABLE" if cf_blocked else ("LIVE_VERIFIED" if all_detected_shows else "ACCESSIBLE"),
             "error": error_msg,
         }
+
+    def record_manual_verification(
+        self,
+        show_date: str,
+        show_time: str,
+        booking_link: Optional[str] = None,
+        screen_name: str = "4K RGB Laser Atmos (Audi 1)",
+        booking_status: str = "AVAILABLE",
+    ) -> Tuple[int, bool, Dict[str, Any]]:
+        """
+        Manual Booking-Page Verification Fallback:
+        Allows the operator/user to verify live BookMyShow opening directly via RDP / Dashboard,
+        instantly recording a LIVE_VERIFIED showtime and triggering the real Telegram alert.
+        """
+        link = booking_link or self.base_venue_url
+        show_record = {
+            "cinema_name": self.cinema_name,
+            "cinema_code": self.cinema_code,
+            "movie_title": self.target_movie,
+            "show_date": show_date,
+            "show_time": show_time,
+            "screen_name": screen_name,
+            "session_id": "MANUAL_VERIFY",
+            "booking_status": booking_status,
+            "booking_link": link,
+            "verification_mode": "LIVE_VERIFIED",
+        }
+
+        show_id, is_new, is_bookable = self.db.record_showtime(show_record)
+        self.db.set_status("monitoring_status", "LIVE_VERIFIED")
+        self.db.set_status("source_state", "LIVE_VERIFIED")
+        self.db.set_status(
+            "last_check_result",
+            f"LIVE_VERIFIED (Manual Fallback): Show confirmed for {show_date} at {show_time}",
+        )
+        self.db.log_event(
+            "SUCCESS",
+            "MANUAL_VERIFY",
+            f"Operator manually verified live booking open: {show_date} {show_time} at {link}",
+        )
+        return show_id, is_new, show_record
