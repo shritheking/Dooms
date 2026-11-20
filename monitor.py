@@ -337,8 +337,11 @@ class BookingMonitor:
                 if browser:
                     await browser.close()
 
-        now_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        now = datetime.datetime.now(datetime.timezone.utc)
+        now_str = now.strftime("%Y-%m-%d %H:%M:%S UTC")
+        next_check = (now + datetime.timedelta(seconds=Config.CHECK_INTERVAL_SECONDS)).strftime("%Y-%m-%d %H:%M:%S UTC")
         self.db.set_status("last_check_time", now_str)
+        self.db.set_status("next_scheduled_check", next_check)
 
         if cf_blocked:
             self.db.set_status("monitoring_status", "SOURCE_UNAVAILABLE")
@@ -381,12 +384,21 @@ class BookingMonitor:
         booking_link: Optional[str] = None,
         screen_name: str = "4K RGB Laser Atmos (Audi 1)",
         booking_status: str = "AVAILABLE",
-    ) -> Tuple[int, bool, Dict[str, Any]]:
+    ) -> Tuple[int, bool, bool, Dict[str, Any], Optional[str]]:
         """
         Manual Booking-Page Verification Fallback:
         Allows the operator/user to verify live BookMyShow opening directly via RDP / Dashboard,
         instantly recording a LIVE_VERIFIED showtime and triggering the real Telegram alert.
+        Returns: (show_id, is_new, is_duplicate, show_record, prev_alert_time)
         """
+        is_dup, prev_time = self.db.is_already_alerted(
+            show_date=show_date,
+            show_time=show_time,
+            screen_name=screen_name,
+            cinema_code=self.cinema_code,
+            movie_title=self.target_movie,
+        )
+
         link = booking_link or self.base_venue_url
         show_record = {
             "cinema_name": self.cinema_name,
@@ -401,16 +413,28 @@ class BookingMonitor:
             "verification_mode": "LIVE_VERIFIED",
         }
 
+        now_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        self.db.set_status("last_verification_time", now_str)
+
+        if is_dup:
+            logger.info(f"Show {show_date} {show_time} was already alerted at {prev_time}. Suppressing duplicate.")
+            self.db.log_event(
+                "INFO",
+                "MANUAL_VERIFY",
+                f"Manual verification entered for {show_date} {show_time}, but alert was already delivered at {prev_time}. Duplicate suppressed.",
+            )
+            return 0, False, True, show_record, prev_time
+
         show_id, is_new, is_bookable = self.db.record_showtime(show_record)
         self.db.set_status("monitoring_status", "LIVE_VERIFIED")
         self.db.set_status("source_state", "LIVE_VERIFIED")
         self.db.set_status(
             "last_check_result",
-            f"LIVE_VERIFIED (Manual Fallback): Show confirmed for {show_date} at {show_time}",
+            f"LIVE_VERIFIED: Show confirmed for {show_date} at {show_time}",
         )
         self.db.log_event(
             "SUCCESS",
             "MANUAL_VERIFY",
             f"Operator manually verified live booking open: {show_date} {show_time} at {link}",
         )
-        return show_id, is_new, show_record
+        return show_id, is_new, False, show_record, None
