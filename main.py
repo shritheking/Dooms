@@ -18,7 +18,7 @@ from pathlib import Path
 from pydantic import BaseModel
 
 import uvicorn
-from fastapi import FastAPI, BackgroundTasks
+from fastapi import FastAPI, BackgroundTasks, Request, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -137,6 +137,9 @@ async def on_app_startup():
 class ManualVerifyRequest(BaseModel):
     show_date: str
     show_time: str
+    operator_name: str
+    visually_confirmed: bool
+    confirmation_statement: Optional[str] = None
     booking_link: Optional[str] = None
     screen_name: Optional[str] = "4K RGB Laser Atmos (Audi 1)"
     booking_status: Optional[str] = "AVAILABLE"
@@ -816,7 +819,7 @@ DASHBOARD_HTML = """
         <div class="verification-panel">
             <div class="verification-header">
                 <div class="verification-title">
-                    <span>🛡️</span> Manual Booking Verification & One-Click Telegram Dispatch
+                    <span>🛡️</span> Visual Booking Verification & One-Click Telegram Dispatch
                 </div>
                 <a href="https://in.bookmyshow.com/cinemas/madurai/ritzy-sha-cinemas-4k-rgb-laser-atmos-madurai/buytickets/RZYM" 
                    target="_blank" 
@@ -825,21 +828,29 @@ DASHBOARD_HTML = """
                     🌐 Open Ritzy Sha on BMS (RZYM) ↗
                 </a>
             </div>
+
+            <div style="background: rgba(255, 68, 68, 0.12); border: 1px solid rgba(255, 68, 68, 0.4); border-radius: 10px; padding: 12px 16px; margin-top: 12px; margin-bottom: 16px; font-size: 13px; color: #FFA8A8; display: flex; align-items: center; gap: 10px;">
+                <span style="font-size: 18px;">🛑</span>
+                <span><strong>STRICT SAFEGUARD ACTIVE:</strong> Only genuine future booking dates (Asia/Kolkata timezone) are accepted. Past dates, test clicks, and unconfirmed simulations are strictly blocked. All confirmations are logged to the permanent audit trail.</span>
+            </div>
+
             <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.6;">
-                Click <strong>"CHECK DOOMSDAY BOOKINGS"</strong> above to inspect the live Ritzy Sha Cinemas page. When actual Avengers: Doomsday showtimes appear open, fill or confirm the show details below and hit <strong>"One-Click Confirm"</strong>. The verified booking alert will immediately dispatch to your Telegram bot. <em>Duplicate notifications are automatically suppressed.</em>
+                Step 1: Click <strong>"CHECK DOOMSDAY BOOKINGS"</strong> above to inspect the live Ritzy Sha Cinemas page.<br>
+                Step 2: When real Avengers: Doomsday showtimes appear open with bookable seats, fill in the date and time below.<br>
+                Step 3: Check the certification checkbox and click <strong>"CONFIRM BOOKINGS OPEN & SEND TELEGRAM ALERT"</strong>.
             </p>
 
             <div class="form-grid">
                 <div class="input-group">
-                    <label>Show Date</label>
-                    <input type="date" id="manualDate" class="input-control">
+                    <label>Show Date (Asia/Kolkata)</label>
+                    <input type="date" id="manualDate" class="input-control" required>
                 </div>
                 <div class="input-group">
                     <label>
                         <span>Showtime</span>
                         <span style="font-size: 11px; color: var(--text-muted);">Pick quick time:</span>
                     </label>
-                    <input type="text" id="manualTime" class="input-control" placeholder="06:45 PM" value="06:45 PM">
+                    <input type="text" id="manualTime" class="input-control" placeholder="06:45 PM" value="06:45 PM" required>
                     <div class="quick-pills">
                         <button type="button" class="pill-btn" onclick="setTime('10:15 AM')">10:15 AM</button>
                         <button type="button" class="pill-btn" onclick="setTime('02:30 PM')">02:30 PM</button>
@@ -848,19 +859,32 @@ DASHBOARD_HTML = """
                     </div>
                 </div>
                 <div class="input-group">
+                    <label>Operator Name (Required for Audit Log)</label>
+                    <input type="text" id="manualOperator" class="input-control" value="Shri Dharsan" placeholder="Your Name" required>
+                </div>
+                <div class="input-group">
                     <label>Screen Name</label>
                     <input type="text" id="manualScreen" class="input-control" value="4K RGB Laser Atmos (Audi 1)">
                 </div>
                 <div class="input-group">
                     <label>Booking Status</label>
                     <select id="manualStatus" class="input-control" style="background: #070A12;">
-                        <option value="AVAILABLE">AVAILABLE</option>
-                        <option value="FILLING_FAST">FILLING_FAST</option>
+                        <option value="AVAILABLE">AVAILABLE (Seats Bookable)</option>
+                        <option value="FILLING_FAST">FILLING_FAST (Fast Filling)</option>
                     </select>
                 </div>
                 <div class="input-group" style="grid-column: 1 / -1;">
                     <label>Direct Booking URL</label>
                     <input type="text" id="manualLink" class="input-control" value="https://in.bookmyshow.com/cinemas/madurai/ritzy-sha-cinemas-4k-rgb-laser-atmos-madurai/buytickets/RZYM">
+                </div>
+
+                <div style="grid-column: 1 / -1; margin-top: 6px;">
+                    <label style="display: flex; align-items: flex-start; gap: 12px; cursor: pointer; background: rgba(0, 210, 255, 0.05); padding: 14px 16px; border-radius: 10px; border: 1px solid rgba(0, 210, 255, 0.3);">
+                        <input type="checkbox" id="manualVisualConfirm" style="margin-top: 3px; transform: scale(1.3); accent-color: var(--electric-blue); cursor: pointer;" />
+                        <span style="font-size: 13px; color: #FFFFFF; font-weight: 600; line-height: 1.5;">
+                            I certify under audit logging that I have opened BookMyShow for Ritzy Sha Cinemas Madurai (RZYM) and visually verified that actual seats are bookable right now for this showtime.
+                        </span>
+                    </label>
                 </div>
             </div>
 
@@ -1023,18 +1047,30 @@ DASHBOARD_HTML = """
         async function submitOneClickConfirmation() {
             const date = document.getElementById('manualDate').value;
             const time = document.getElementById('manualTime').value;
+            const operator = (document.getElementById('manualOperator').value || '').trim();
             const screen = document.getElementById('manualScreen').value;
             const link = document.getElementById('manualLink').value;
             const status = document.getElementById('manualStatus').value;
+            const isConfirmed = document.getElementById('manualVisualConfirm').checked;
 
             if (!date || !time) {
                 alert("Please select both Show Date and Showtime.");
                 return;
             }
 
+            if (!operator) {
+                alert("Please enter Operator Name for the audit log.");
+                return;
+            }
+
+            if (!isConfirmed) {
+                alert("Validation Requirement: You must check the certification checkbox confirming that you visually checked the BookMyShow venue page and confirmed seats are bookable.");
+                return;
+            }
+
             const btn = document.getElementById('btnConfirmLive');
             btn.disabled = true;
-            btn.innerText = "⏳ CONFIRMING & DISPATCHING ALERT...";
+            btn.innerText = "⏳ VALIDATING & DISPATCHING ALERT...";
 
             try {
                 const res = await fetch('/api/manual-verify', {
@@ -1043,6 +1079,8 @@ DASHBOARD_HTML = """
                     body: JSON.stringify({
                         show_date: date,
                         show_time: time,
+                        operator_name: operator,
+                        visually_confirmed: isConfirmed,
                         screen_name: screen,
                         booking_link: link || undefined,
                         booking_status: status
@@ -1050,7 +1088,9 @@ DASHBOARD_HTML = """
                 });
                 const r = await res.json();
 
-                if (r.duplicate) {
+                if (!res.ok) {
+                    showToast(`❌ REJECTED: ${r.detail || r.message || 'Validation failed'}`, false);
+                } else if (r.duplicate) {
                     showToast(`⚠️ Duplicate Suppressed: This showtime was already alerted at ${r.alert_timestamp}.`, false);
                 } else {
                     showToast(`🚨 CONFIRMED! Telegram booking alert dispatched immediately!`, true);
@@ -1062,6 +1102,18 @@ DASHBOARD_HTML = """
                 btn.disabled = false;
                 btn.innerHTML = "<span>⚡ CONFIRM BOOKINGS OPEN & SEND TELEGRAM ALERT</span>";
             }
+        }
+
+        // Initialize minimum date to today in IST
+        try {
+            const todayIST = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+            const dateInput = document.getElementById('manualDate');
+            dateInput.min = todayIST;
+            if (!dateInput.value || dateInput.value < todayIST) {
+                dateInput.value = todayIST;
+            }
+        } catch (e) {
+            console.log("Could not set min date:", e);
         }
 
         loadDashboardData();
@@ -1088,12 +1140,19 @@ async def get_system_status():
     # Filter shows for dashboard so only LIVE_VERIFIED shows are presented
     live_shows = [s for s in shows if s.get("verification_mode") == "LIVE_VERIFIED"]
     logs = db.get_recent_logs(limit=40)
+    audit_logs = db.get_verification_audit_logs(limit=20)
     return {
         "stats": stats,
         "shows": live_shows,
         "logs": logs,
+        "audit_logs": audit_logs,
         "telegram_configured": Config.is_telegram_configured(),
     }
+
+
+@app.get("/api/audit-logs")
+async def get_audit_logs():
+    return {"audit_logs": db.get_verification_audit_logs(limit=50)}
 
 
 @app.post("/api/check-now")
@@ -1113,21 +1172,44 @@ async def test_telegram():
 
 
 @app.post("/api/manual-verify")
-async def manual_verify(req: ManualVerifyRequest, background_tasks: BackgroundTasks):
+async def manual_verify(req: ManualVerifyRequest, background_tasks: BackgroundTasks, request: Request):
     """
-    Operator One-Click Verification Fallback:
-    1. Checks if this exact showtime was already alerted (prevents duplicates).
-    2. Records an official LIVE_VERIFIED showtime in SQLite.
-    3. Immediately dispatches the real booking alert to Telegram.
-    4. Updates last verification timestamp.
+    Operator One-Click Verification Fallback with Strict Validation Safeguards:
+    1. Rejects if visually_confirmed is False.
+    2. Rejects if operator_name is missing.
+    3. Strictly validates show_date and show_time against Asia/Kolkata timezone (rejects past dates).
+    4. Records an explicit audit log entry in verification_audit_log.
+    5. Deduplicates: if already alerted, suppresses duplicate alert.
+    6. Dispatches genuine LIVE_VERIFIED booking alert to Telegram.
     """
-    show_id, is_new, is_duplicate, show_record, prev_time = monitor.record_manual_verification(
-        show_date=req.show_date,
-        show_time=req.show_time,
-        booking_link=req.booking_link,
-        screen_name=req.screen_name or "4K RGB Laser Atmos (Audi 1)",
-        booking_status=req.booking_status or "AVAILABLE",
-    )
+    if not req.visually_confirmed:
+        raise HTTPException(
+            status_code=400,
+            detail="Visual verification certification required. You must check the confirmation checkbox after verifying seats on BookMyShow."
+        )
+
+    clean_op = (req.operator_name or "").strip()
+    if not clean_op or len(clean_op) < 2:
+        raise HTTPException(
+            status_code=400,
+            detail="Operator name is required for verification audit logging."
+        )
+
+    client_ip = request.client.host if request.client else "127.0.0.1"
+
+    try:
+        show_id, is_new, is_duplicate, show_record, prev_time = monitor.record_manual_verification(
+            show_date=req.show_date,
+            show_time=req.show_time,
+            operator_name=clean_op,
+            visually_confirmed=req.visually_confirmed,
+            booking_link=req.booking_link,
+            screen_name=req.screen_name or "4K RGB Laser Atmos (Audi 1)",
+            booking_status=req.booking_status or "AVAILABLE",
+            ip_address=client_ip,
+        )
+    except ValueError as val_err:
+        raise HTTPException(status_code=400, detail=str(val_err))
 
     if is_duplicate:
         return {
